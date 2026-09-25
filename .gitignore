@@ -1,0 +1,5 @@
+/.claude/
+.idea
+/vendor/
+.phpunit.cache
+CHANGELOG.md

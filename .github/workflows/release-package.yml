@@ -1,0 +1,48 @@
+name: Release package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Attach wordpress-migrator.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the plugin version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(sed -n 's/^ \* Version: *//p' wordpress-migrator.php | head -n1 | tr -d '[:space:]')"
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::Release tag '$TAG' does not match Version: $version in wordpress-migrator.php"
+            exit 1
+          fi
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Install production dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Build the plugin zip
+        run: |
+          mkdir -p build
+          zip -r -q build/wordpress-migrator.zip \
+            wordpress-migrator.php config.php migrate.php restore.php composer.json composer.lock \
+            assets src templates vendor \
+            -x '*.DS_Store'
+          unzip -l build/wordpress-migrator.zip | tail -n 1
+
+      - name: Replace the zip on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" build/wordpress-migrator.zip --clobber
