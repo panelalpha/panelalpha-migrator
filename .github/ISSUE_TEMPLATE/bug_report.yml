@@ -1,0 +1,120 @@
+name: "Report a bug"
+description: "A migration failed, or the plugin behaves a little off? Let us know and we'll take a look."
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        > **Found a security vulnerability?** Do **not** file it here.
+        > Please report it privately through [manage.panelalpha.com/contact](https://manage.panelalpha.com/contact).
+
+        > **A migration stopped halfway?** It can usually be resumed.
+        > Start with [Stop and resume](../blob/master/documentation/02-guides/stop-and-resume.md)
+        > and the troubleshooting in [Migrate a site](../blob/master/documentation/01-getting-started/migrate-a-site.md#troubleshooting);
+        > open an issue here if the plugin's own behaviour is wrong.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched existing issues and this has not been reported yet.
+          required: true
+        - label: I am running the latest version of the plugin on both sites (or I can reproduce it there).
+          required: true
+        - label: This is not a security vulnerability (those are reported privately).
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the problem, and what you expected instead.
+      placeholder: "When I ..., the migration ... . I expected ... ."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps, so we can see it too. Include the options you chose and any API calls you made.
+      placeholder: |
+        1. Generate a new token on the destination and copy the address
+        2. Paste it on the source, set Additional Exclusions to `...`
+        3. Select Start Migration
+        4. See the error
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: "Shown under WordPress Migrator on the Plugins page."
+      placeholder: "e.g. 1.1.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: method
+    attributes:
+      label: How was the migration run?
+      options:
+        - From the dashboard (Migrator page)
+        - Over the API (remote-sync)
+        - With migrate.php
+        - From PanelAlpha
+    validations:
+      required: true
+
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where did it go wrong?
+      options:
+        - Installing or activating the plugin
+        - Generating or copying the token
+        - Scanning the source
+        - Sending the database
+        - Sending the files
+        - Finishing the migration
+        - The migrated site on the destination
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Source and destination
+      description: WordPress, PHP and MySQL/MariaDB versions, and the hosting on each side (e.g. cPanel, WP Cloud, Bitnami, PanelAlpha).
+      placeholder: |
+        Source: WordPress 6.6, PHP 8.1, MariaDB 10.6, shared cPanel hosting
+        Destination: WordPress 6.8, PHP 8.3, MySQL 8.0, PanelAlpha
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: |
+        Paste the error shown on the Migrator page, the API answer, or lines from
+        `wp-content/migrations/skipped_files_<migration-id>.log` on the destination.
+        This will be rendered as code, so no backticks are needed.
+        Please redact tokens (the `?token=` part of the address), passwords, and anything secret.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, the size of the site, related issues, workarounds you tried, etc.
+    validations:
+      required: false

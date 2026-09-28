@@ -1,0 +1,42 @@
+# Check the result
+
+When the source shows **Migration Completed Successfully!**, the destination already runs the copied site under its own address. Check it in a browser before you point visitors at it, then remove the plugin from both sites.
+
+## Check the destination
+
+1. Open the destination address in a private browser window.
+2. Check that the page title, the menus and the content are the source site's, and that images load.
+3. Open a few inner pages. If they show "Not Found" while the home page works, open **Settings** > **Permalinks** in the dashboard and select **Save Changes** once.
+4. Log in to the destination dashboard with a username and password from the **source** site. The destination's old accounts were replaced.
+
+## Files the migration left out
+
+Some files are never copied: `wp-config.php`, the `.htaccess` file in the site's main folder, and the plugin itself. The destination keeps its own. If the source's `.htaccess` had rules you added yourself, such as redirects, copy those lines into the destination's `.htaccess` by hand. The full list: [What gets moved](../02-guides/what-gets-moved.md).
+
+A file the destination could not write, for example because a folder is not writable, is skipped and written to a log on the destination:
+
+```text
+wp-content/migrations/skipped_files_<migration-id>.log
+```
+
+Each line gives the file and the reason. Copy those files by hand, or fix the folder permissions and run the migration again.
+
+## Remove the plugin
+
+The destination accepts writes from anyone who has its address and token for as long as the plugin is active. When you are satisfied with the result:
+
+1. On both sites, open **Plugins**, select **Deactivate** under **WordPress Migrator**, then **Delete**.
+2. On both sites, delete the `wp-content/migrations/` folder. It holds the working files of the migration, and on the source a list of every file and table that was sent.
+
+To migrate again later, install the plugin again and create a new token.
+
+## Troubleshooting
+
+**The destination still shows its old content.**
+The page may come from a cache. Clear the cache of any caching plugin, of your host and of your browser. If it persists, the migration went to a different server: check the address you pasted on the source.
+
+**Links or images point at the old address.**
+The address is changed in plain text, in URL-encoded text, and inside saved settings. Some plugins save settings in a form the migrator cannot safely rebuild; those values are left unchanged so they cannot break. The part before the domain is kept as it was: a link to `http://` on the source becomes `http://` on the destination, and `https://` stays `https://`. Fix what remains in that plugin's settings, or with a search-and-replace plugin on the destination.
+
+**You cannot log in to the destination.**
+Use the source site's login. If you do not have it, reset the password with **Lost your password?** on the destination login page. The email goes to the address stored on the source.

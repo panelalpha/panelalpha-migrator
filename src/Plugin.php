@@ -1,0 +1,310 @@
+<?php
+
+declare(strict_types=1);
+
+namespace WordpressMigrator;
+
+use WordpressMigrator\Admin\AdminPage;
+use WordpressMigrator\Api\RouteProvider;
+use WordpressMigrator\Helpers\Config;
+use WordpressMigrator\Helpers\Filesystem;
+use WordpressMigrator\Helpers\PathProvider;
+use WordpressMigrator\Helpers\Security;
+use WordpressMigrator\Helpers\TokenHelper;
+use WordpressMigrator\Helpers\BrandingHelper;
+
+/**
+ * Class Plugin
+ *
+ * @package WordpressMigrator
+ *
+ * Main plugin class that initializes and manages the WordPress Migrator plugin.
+ */
+class Plugin
+{
+    private static ?self $instance = null;
+    private RouteProvider $routeProvider;
+
+    /**
+     * Gets the singleton instance.
+     *
+     * @return self
+     */
+    public static function getInstance(): self
+    {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    /**
+     * Private constructor for singleton pattern.
+     */
+    private function __construct()
+    {
+        Config::init();
+        $this->createMigrationDirectory();
+        $this->routeProvider = new RouteProvider();
+
+        $this->initializeWordPress();
+    }
+
+    /**
+     * Initializes WordPress hooks.
+     */
+    private function initializeWordPress(): void
+    {
+        if (function_exists('add_action')) {
+            add_action('admin_menu', [$this, 'addAdminMenu']);
+            add_action('admin_enqueue_scripts', [$this, 'enqueueAdminAssets']);
+            add_action('rest_api_init', [$this->routeProvider, 'registerWordPressRoutes']);
+            add_filter('plugin_row_meta', [$this, 'filterPluginRowMeta'], 10, 4);
+        }
+    }
+
+    /**
+     * Filters plugin row meta to apply dynamic branding.
+     *
+     * @param array<int, string>   $plugin_meta  An array of the plugin's metadata.
+     * @param string               $plugin_file  Path to the plugin file relative to the plugins directory.
+     * @param array<string, mixed> $plugin_data  An array of plugin data.
+     * @param string               $status       Status of the plugin.
+     *
+     * @return array<int, string> Filtered plugin metadata.
+     */
+    public function filterPluginRowMeta(array $plugin_meta, string $plugin_file, array $plugin_data, string $status): array
+    {
+        if (!function_exists('plugin_basename')) {
+            return $plugin_meta;
+        }
+
+        $thisPluginBasename = plugin_basename(WP_MIGRATOR_PLUGIN_DIR . 'wordpress-migrator.php');
+
+        if ($plugin_file !== $thisPluginBasename) {
+            return $plugin_meta;
+        }
+
+        $branding = BrandingHelper::getBranding();
+
+        $authorName = $branding['name'] ?? 'PanelAlpha';
+        $authorUrl = $branding['url'] ?? 'https://panelalpha.com';
+        $version = $plugin_data['Version'] ?? '';
+
+        $newMeta = [];
+
+        if ($version !== '') {
+            $newMeta[] = sprintf(
+                esc_html__('Version %s', 'wordpress-migrator'),
+                esc_html($version)
+            );
+        }
+
+        $newMeta[] = sprintf(
+            '%s <a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
+            esc_html__('By', 'wordpress-migrator'),
+            esc_url($authorUrl),
+            esc_html($authorName)
+        );
+
+        return $newMeta;
+    }
+
+    /**
+     * Creates the migration directory if it doesn't exist.
+     */
+    public function createMigrationDirectory(): void
+    {
+        $migrationDir = PathProvider::getMigrationDir();
+
+        if (file_exists($migrationDir)) {
+            return;
+        }
+
+        $this->ensureParentDirectoryIsWritable($migrationDir);
+        $this->createDirectoryStructure($migrationDir);
+        $this->createHtaccessFile($migrationDir);
+    }
+
+    /**
+     * Ensures the parent directory is writable.
+     *
+     * @param string $migrationDir Migration directory path
+     */
+    private function ensureParentDirectoryIsWritable(string $migrationDir): void
+    {
+        $parentDir = dirname($migrationDir);
+
+        if (!is_writable($parentDir)) {
+            $errorMessage = "WordPress Migrator: Parent directory is not writable: {$parentDir}";
+            error_log($errorMessage);
+
+            $this->showAdminNotice(
+                'WordPress Migrator: Cannot create migration directory. Please ensure ' .
+                Security::escHtml($parentDir) . ' is writable.'
+            );
+        }
+    }
+
+    /**
+     * Creates the directory structure.
+     *
+     * @param string $migrationDir Migration directory path
+     */
+    private function createDirectoryStructure(string $migrationDir): void
+    {
+        $result = Filesystem::mkdirP($migrationDir);
+
+        if (!$result) {
+            error_log("WordPress Migrator: Failed to create migration directory: {$migrationDir}");
+        }
+    }
+
+    /**
+     * Creates .htaccess file to protect migration directory.
+     *
+     * @param string $migrationDir Migration directory path
+     */
+    private function createHtaccessFile(string $migrationDir): void
+    {
+        $htaccessContent = "Order deny,allow\nDeny from all";
+        $htaccessFile = $migrationDir . '.htaccess';
+
+        if (@file_put_contents($htaccessFile, $htaccessContent) === false) {
+            error_log("WordPress Migrator: Failed to create .htaccess file: {$htaccessFile}");
+        }
+    }
+
+    /**
+     * Shows an admin notice.
+     *
+     * @param string $message Notice message
+     */
+    private function showAdminNotice(string $message): void
+    {
+        if (function_exists('add_action')) {
+            add_action('admin_notices', function() use ($message) {
+                echo '<div class="notice notice-error"><p>' . $message . '</p></div>';
+            });
+        }
+    }
+
+    /**
+     * Adds admin menu page.
+     */
+    public function addAdminMenu(): void
+    {
+        if (!function_exists('add_menu_page')) {
+            return;
+        }
+
+        add_menu_page(
+            'WordPress Migrator',
+            'Migrator',
+            'manage_options',
+            'wordpress-migrator',
+            [$this, 'renderAdminPage'],
+            'dashicons-update',
+            80
+        );
+    }
+
+    /**
+     * Renders the admin page.
+     */
+    public function renderAdminPage(): void
+    {
+        $adminPage = new AdminPage();
+        $adminPage->render();
+    }
+
+    /**
+     * Enqueues admin assets (CSS and JavaScript).
+     *
+     * @param string $hook Current admin page hook
+     */
+    public function enqueueAdminAssets(string $hook): void
+    {
+        if ('toplevel_page_wordpress-migrator' !== $hook) {
+            return;
+        }
+
+        $this->enqueueStyles();
+        $this->enqueueScripts();
+    }
+
+    /**
+     * Enqueues admin styles.
+     */
+    private function enqueueStyles(): void
+    {
+        if (!function_exists('wp_enqueue_style')) {
+            return;
+        }
+
+        wp_enqueue_style(
+            'wp-migrator-admin',
+            PathProvider::getPluginUrl() . 'assets/css/migrator.css',
+            [],
+            PathProvider::getVersion()
+        );
+    }
+
+    /**
+     * Enqueues admin scripts with localized data.
+     */
+    private function enqueueScripts(): void
+    {
+        if (!function_exists('wp_enqueue_script') || !function_exists('wp_localize_script')) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'wp-migrator-admin',
+            PathProvider::getPluginUrl() . 'assets/js/migrator.js',
+            ['jquery'],
+            PathProvider::getVersion(),
+            true
+        );
+
+        wp_localize_script('wp-migrator-admin', 'wpMigrator', $this->getScriptData());
+    }
+
+    /**
+     * Gets data to be localized for JavaScript.
+     *
+     * @return array Script data
+     */
+    private function getScriptData(): array
+    {
+        return [
+            'ajaxUrl' => function_exists('admin_url') ? admin_url('admin-ajax.php') : '',
+            'restUrl' => function_exists('rest_url') ? rest_url('wp-migrator/v1') : '',
+            'nonce' => function_exists('wp_create_nonce') ? wp_create_nonce('wp_rest') : '',
+            'token' => TokenHelper::getToken() ?: '',
+            'siteUrl' => function_exists('get_site_url') ? get_site_url() : Config::get('site_url', ''),
+            'mode' => Config::get('mode', 'source'),
+            'showModeSwitcher' => Config::get('show_mode_switcher', true),
+            'i18n' => [
+                'scanning' => 'Scanning in progress...',
+                'scanComplete' => 'Scan completed!',
+                'error' => 'An error occurred',
+                'enterUrl' => 'Enter destination WordPress URL',
+            ]
+        ];
+    }
+
+    /**
+     * Checks if current user has required permissions.
+     *
+     * @return bool True if user has permissions
+     */
+    public function checkPermissions(): bool
+    {
+        if (function_exists('current_user_can')) {
+            return current_user_can('manage_options');
+        }
+
+        return Security::currentUserCan('manage_options');
+    }
+}

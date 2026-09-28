@@ -1,0 +1,68 @@
+name: "Request a feature"
+description: "Have an idea that could make WordPress Migrator better? We'd love to hear it."
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape WordPress Migrator!
+
+        > Not sure yet, or want to talk it through first?
+        > Bring it to our [Discord](https://discord.gg/9twHWR7xGX) or the
+        > [community forum](https://community.panelalpha.com/) before opening an issue.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched existing issues and this has not been requested yet.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part is it about?
+      options:
+        - Migrating from the dashboard
+        - The API (remote-sync) or migrate.php
+        - What gets copied or left out
+        - Security and tokens
+        - Documentation
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the problem or the frustration, not just the solution. What are you trying to do?
+      placeholder: "I'm always frustrated when ... / I can't currently ... ."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen? How would it work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other approaches, workarounds, or how other migration plugins handle this.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Mockups, examples, links, or context that helps explain the idea.
+    validations:
+      required: false

@@ -1,0 +1,67 @@
+<?php
+
+declare(strict_types=1);
+
+namespace WordpressMigrator\Tests;
+
+use PHPUnit\Framework\TestCase;
+use RuntimeException;
+use WordpressMigrator\Helpers\Filesystem;
+use WordpressMigrator\Tests\Support\TemporaryDirectory;
+
+final class FilesystemTest extends TestCase
+{
+    use TemporaryDirectory;
+
+    public function testTrailingSlashIsAddedOnce(): void
+    {
+        $this->assertSame('/var/www/', Filesystem::trailingSlashIt('/var/www'));
+        $this->assertSame('/var/www/', Filesystem::trailingSlashIt('/var/www///'));
+        $this->assertSame('C:\\site/', Filesystem::trailingSlashIt('C:\\site\\'));
+    }
+
+    public function testMkdirCreatesNestedFolders(): void
+    {
+        $path = $this->createTemporaryDirectory() . 'a/b/c';
+
+        $this->assertTrue(Filesystem::mkdirP($path));
+        $this->assertDirectoryExists($path);
+        $this->assertTrue(Filesystem::mkdirP($path));
+    }
+
+    public function testMkdirOnAnExistingFileFails(): void
+    {
+        $path = $this->createTemporaryDirectory() . 'file.txt';
+        file_put_contents($path, 'x');
+
+        $this->assertFalse(Filesystem::mkdirP($path));
+    }
+
+    public function testMkdirUnderAFileFails(): void
+    {
+        $file = $this->createTemporaryDirectory() . 'file.txt';
+        file_put_contents($file, 'x');
+
+        $this->assertFalse(@Filesystem::mkdirP($file . '/child'));
+    }
+
+    public function testEnsureDirectoryExistsCreatesTheFolder(): void
+    {
+        $path = $this->createTemporaryDirectory() . 'new';
+
+        Filesystem::ensureDirectoryExists($path);
+
+        $this->assertDirectoryExists($path);
+    }
+
+    public function testEnsureDirectoryExistsThrowsWhenItCannotCreate(): void
+    {
+        $file = $this->createTemporaryDirectory() . 'file.txt';
+        file_put_contents($file, 'x');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Failed to create directory: ' . $file . '/child');
+
+        Filesystem::ensureDirectoryExists($file . '/child');
+    }
+}
