@@ -130,7 +130,51 @@ class PathProvider
      */
     public static function getMigrationFilePath(string $migrationId): string
     {
+        if (!self::isSafeMigrationId($migrationId)) {
+            throw new \InvalidArgumentException('Invalid migration ID');
+        }
+
         return self::getMigrationDir() . $migrationId . '.json';
+    }
+
+    /**
+     * Gets the full path to the file holding a migration's secrets.
+     * It is a PHP file that prints nothing, so it cannot be read over HTTP.
+     *
+     * @param string $migrationId Migration identifier
+     * @return string
+     */
+    public static function getMigrationSecretFilePath(string $migrationId): string
+    {
+        if (!self::isSafeMigrationId($migrationId)) {
+            throw new \InvalidArgumentException('Invalid migration ID');
+        }
+
+        return self::getMigrationDir() . $migrationId . '.secret.php';
+    }
+
+    /**
+     * A migration id may be used as a directory name.
+     * Only letters, digits, and underscores are safe.
+     *
+     * @param string $migrationId Migration identifier
+     * @return bool
+     */
+    public static function isSafeMigrationId(string $migrationId): bool
+    {
+        return preg_match('/^[A-Za-z0-9_]+\z/', $migrationId) === 1;
+    }
+
+    /**
+     * A chunk id or chunk type may be used inside a file name.
+     * Only letters, digits, underscores, and hyphens are safe.
+     *
+     * @param string $value
+     * @return bool
+     */
+    public static function isSafeChunkToken(string $value): bool
+    {
+        return preg_match('/^[A-Za-z0-9_-]+\z/', $value) === 1;
     }
 
     /**

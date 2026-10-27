@@ -74,6 +74,38 @@ final class FileScannerTest extends TestCase
         self::assertSame(['wp-content/uploads/photo.jpg'], array_map(static fn ($file) => $file->path, $files));
     }
 
+    public function testSkipsSymlinkWhoseTargetIsOutsideTheScanRoot(): void
+    {
+        if (!function_exists('symlink')) {
+            $this->markTestSkipped('symlink() is not available');
+        }
+
+        $root = $this->createTemporaryDirectory();
+        $outside = sys_get_temp_dir() . '/wp-migrator-outside-' . bin2hex(random_bytes(4));
+        mkdir($outside);
+        $outsideFile = $outside . '/secret.txt';
+        file_put_contents($outsideFile, 'secret');
+        self::writeFile($root . 'inside.txt', 'inside');
+        $link = $root . 'leak.txt';
+
+        if (!@symlink($outsideFile, $link)) {
+            @unlink($outsideFile);
+            @rmdir($outside);
+            $this->markTestSkipped('symlink() could not create a link');
+        }
+
+        try {
+            $files = (new FileScanner(new FileScannerConfig($root, [], [], [])))->scan();
+            $paths = array_map(static fn ($file) => $file->path, $files);
+
+            $this->assertSame(['inside.txt'], $paths);
+        } finally {
+            @unlink($link);
+            @unlink($outsideFile);
+            @rmdir($outside);
+        }
+    }
+
     public function testMissingRootRaisesFilesystemError(): void
     {
         $root = $this->createTemporaryDirectory() . 'missing';

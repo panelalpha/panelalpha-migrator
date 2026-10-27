@@ -13,13 +13,15 @@ When the source shows **Migration Completed Successfully!**, the destination alr
 
 Some files are never copied: `wp-config.php`, the `.htaccess` file in the site's main folder, and the plugin itself. The destination keeps its own. If the source's `.htaccess` had rules you added yourself, such as redirects, copy those lines into the destination's `.htaccess` by hand. The full list: [What gets moved](../02-guides/what-gets-moved.md).
 
-A file the destination could not write, for example because a folder is not writable, is skipped and written to a log on the destination:
+The destination keeps a log of files it did not write:
 
 ```text
 wp-content/migrations/skipped_files_<migration-id>.log
 ```
 
-Each line gives the file and the reason. Copy those files by hand, or fix the folder permissions and run the migration again.
+Each line starts with the time and either `SKIPPED` or `FAILED`, then the file and the reason. `SKIPPED` marks a file the destination never overwrites, such as `wp-config.php`. `FAILED` marks a file the destination tried to write and could not, for example because a folder is not writable. A failed file is not skipped quietly: the migration stops with the message **Destination did not deliver the chunk**, and you fix the cause and resume it: [Stop and resume](../02-guides/stop-and-resume.md).
+
+This is not the same as the warning **Some files were deleted on the source before they could be sent and were skipped.** That warning means a file was removed on the source while the migration ran. The migration finished, and those files are not on the destination.
 
 ## Remove the plugin
 

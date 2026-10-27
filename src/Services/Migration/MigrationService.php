@@ -6,6 +6,7 @@ use Exception;
 use WordpressMigrator\Api\RouteProvider;
 use WordpressMigrator\Helpers\Config;
 use WordpressMigrator\Helpers\ExclusionParser;
+use WordpressMigrator\Helpers\MigrationLock;
 use WordpressMigrator\Services\Scanner\DatabaseScanner;
 use WordpressMigrator\Services\Scanner\FileScanner;
 use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
@@ -25,6 +26,7 @@ class MigrationService
     private $databaseScanner;
     private $migrationInfoGenerator;
     private $migrationStorageService;
+    private MigrationLock $lock;
 
     /**
      * MigrationService constructor.
@@ -36,11 +38,13 @@ class MigrationService
     public function __construct(
         DatabaseScanner $databaseScanner,
         MigrationInfoGenerator $migrationInfoGenerator,
-        MigrationStorageService $migrationStorageService
+        MigrationStorageService $migrationStorageService,
+        ?MigrationLock $lock = null
     ) {
         $this->databaseScanner = $databaseScanner;
         $this->migrationInfoGenerator = $migrationInfoGenerator;
         $this->migrationStorageService = $migrationStorageService;
+        $this->lock = $lock ?? new MigrationLock();
     }
 
     /**
@@ -51,19 +55,33 @@ class MigrationService
      * @param string|null $token
      * @param string|null $ip
      * @param bool        $base64
+     * @param bool        $backupDatabase
+     * @param bool        $backupFiles
+     * @param string|null $pinnedIp
+     * @param bool        $insecureTls Skip the HTTPS certificate check; only used with a manual IP
      * @return array
      */
-    public function scanAndPrepareMigration(string $destinationUrl, ?string $exclusionsInput = null, ?string $token = null, ?string $ip = null, bool $base64 = false): array
+    public function scanAndPrepareMigration(string $destinationUrl, ?string $exclusionsInput = null, ?string $token = null, ?string $ip = null, bool $base64 = false, bool $backupDatabase = true, bool $backupFiles = true, ?string $pinnedIp = null, bool $insecureTls = false): array
     {
+        if ($this->lock->isLocked()) {
+            throw new Exception('Another migration is in progress. Wait for it to finish before scanning.');
+        }
+
         $exclusions = null;
         if (!empty($exclusionsInput)) {
             $exclusions = ExclusionParser::parse($exclusionsInput);
         }
 
-        $fileScanner = RouteProvider::createFileScanner($exclusions);
+        $files = [];
+        if ($backupFiles) {
+            $fileScanner = RouteProvider::createFileScanner($exclusions);
+            $files = $fileScanner->scan();
+        }
 
-        $files = $fileScanner->scan();
-        $tables = $this->databaseScanner->scan();
+        $tables = [];
+        if ($backupDatabase) {
+            $tables = $this->databaseScanner->scan();
+        }
 
         $migrationData = $this->migrationInfoGenerator->generate($files, $tables, $destinationUrl);
 
@@ -81,11 +99,26 @@ class MigrationService
             $migrationDataArray['ip'] = $ip;
         }
 
+        if (!empty($ip) && $insecureTls) {
+            $migrationDataArray['insecure_tls'] = true;
+            error_log('MIGRATOR: HTTPS certificate checks are off for migration ' . $migrationData->migrationId . ' (manual IP with insecure_tls).');
+        }
+
+        if (!empty($pinnedIp)) {
+            $migrationDataArray['pinned_ip'] = $pinnedIp;
+        }
+
         if ($base64) {
             $migrationDataArray['base64'] = true;
         }
 
+        $migrationDataArray['backup_database'] = $backupDatabase;
+        $migrationDataArray['backup_files'] = $backupFiles;
+
         $migrationId = $migrationData->migrationId;
+
+        // A scan only reads and writes its own migration file. The lock is taken
+        // when the backup starts, so an abandoned scan never blocks anything.
         $this->migrationStorageService->saveMigrationData($migrationId, $migrationDataArray);
 
         return [
@@ -130,6 +163,8 @@ class MigrationService
         $filePath = $this->migrationStorageService->getMigrationFilePath($migrationId);
         $json = file_get_contents($filePath);
         $data = json_decode($json, true);
+        $data = is_array($data) ? $data : [];
+        $data = $this->migrationStorageService->loadSecrets($migrationId) + $data;
 
         if (!isset($data['t'])) {
             $data['t'] = 'info';

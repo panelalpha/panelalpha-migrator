@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WordpressMigrator\Tests;
 
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Helpers\Config;
 use WordpressMigrator\Helpers\PathProvider;
@@ -30,7 +31,18 @@ final class PathProviderTest extends TestCase
         $this->assertSame('/data/site/', PathProvider::getAbsPath());
         $this->assertSame('9.9.9', PathProvider::getVersion());
         $this->assertSame('/data/migrations/mig_1.json', PathProvider::getMigrationFilePath('mig_1'));
+        $this->assertSame('/data/migrations/mig_20261009_163045.json', PathProvider::getMigrationFilePath('mig_20261009_163045'));
         $this->assertSame('/data/migrations/collected/', PathProvider::getCollectedDir());
+    }
+
+    public function testTraversalMigrationIdIsRejected(): void
+    {
+        Config::set('migration_dir', '/data/migrations/');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid migration ID');
+
+        PathProvider::getMigrationFilePath('../outside');
     }
 
     public function testDefaultsWithoutConfig(): void
@@ -51,5 +63,13 @@ final class PathProviderTest extends TestCase
         $this->assertSame(42, Config::get('answer'));
         $this->assertSame('fallback', Config::get('missing', 'fallback'));
         $this->assertNull(Config::get('missing'));
+    }
+
+    public function testTrailingNewlineIsNotASafeIdentifier(): void
+    {
+        $this->assertFalse(PathProvider::isSafeMigrationId("mig_1\n"));
+        $this->assertFalse(PathProvider::isSafeChunkToken("file_chunk_1\n"));
+        $this->assertTrue(PathProvider::isSafeMigrationId('mig_1'));
+        $this->assertTrue(PathProvider::isSafeChunkToken('file-chunk_1'));
     }
 }

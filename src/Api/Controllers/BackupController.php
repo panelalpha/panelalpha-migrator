@@ -3,11 +3,14 @@
 namespace WordpressMigrator\Api\Controllers;
 
 use Exception;
+use WordpressMigrator\Api\Middleware\InvalidRequestException;
 use WordpressMigrator\Api\Middleware\RequestValidator;
 use WordpressMigrator\Api\Middleware\ResponseFormatter;
+use WordpressMigrator\Helpers\DateTime;
+use WordpressMigrator\Helpers\DestinationNotAllowedException;
+use WordpressMigrator\Helpers\PathProvider;
 use WordpressMigrator\Services\Backup\BackupService;
 use WordpressMigrator\Services\Backup\ChunkService;
-use WordpressMigrator\Helpers\DateTime;
 
 /**
  * Class BackupController
@@ -34,8 +37,8 @@ class BackupController
     public function __construct(
         BackupService $backupService,
         ChunkService $chunkService,
-        RequestValidator $requestValidator = null,
-        ResponseFormatter $responseFormatter = null
+        ?RequestValidator $requestValidator = null,
+        ?ResponseFormatter $responseFormatter = null
     ) {
         $this->backupService = $backupService;
         $this->chunkService = $chunkService;
@@ -66,7 +69,7 @@ class BackupController
             return $this->formatChunkResponseWithProgress($chunk, $progress, 'All database chunks sent');
 
         } catch (Exception $e) {
-            return $this->responseFormatter->error('backup_failed', $e->getMessage(), ['status' => 500]);
+            return $this->migrationIdErrorOr($e, 'backup_failed');
         }
     }
 
@@ -87,7 +90,7 @@ class BackupController
             return $this->responseFormatter->success($result);
 
         } catch (Exception $e) {
-            return $this->responseFormatter->error('backup_failed', $e->getMessage(), ['status' => 500]);
+            return $this->migrationIdErrorOr($e, 'backup_failed');
         }
     }
 
@@ -105,6 +108,8 @@ class BackupController
 
             return $this->formatProgressResponse($progress);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('progress_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -132,7 +137,7 @@ class BackupController
             return $this->formatChunkResponseWithProgress($chunk, $progress, 'All file chunks sent');
 
         } catch (Exception $e) {
-            return $this->responseFormatter->error('backup_failed', $e->getMessage(), ['status' => 500]);
+            return $this->migrationIdErrorOr($e, 'backup_failed');
         }
     }
 
@@ -153,7 +158,7 @@ class BackupController
             return $this->responseFormatter->success($result);
 
         } catch (Exception $e) {
-            return $this->responseFormatter->error('backup_failed', $e->getMessage(), ['status' => 500]);
+            return $this->migrationIdErrorOr($e, 'backup_failed');
         }
     }
 
@@ -171,6 +176,8 @@ class BackupController
 
             return $this->formatProgressResponse($progress);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('progress_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -193,6 +200,8 @@ class BackupController
                 'status' => $status
             ]);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('status_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -208,13 +217,15 @@ class BackupController
     {
         try {
             $migrationId = $this->requestValidator->getMigrationId($request);
-            $this->backupService->setBackupRunning($migrationId, true);
+            $this->backupService->startBackup($migrationId);
 
             return $this->responseFormatter->success([
                 'success' => true,
                 'message' => 'Backup started'
             ]);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('start_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -230,13 +241,16 @@ class BackupController
     {
         try {
             $migrationId = $this->requestValidator->getMigrationId($request);
-            $this->backupService->setBackupRunning($migrationId, false);
+            $keepLock = filter_var($request->get_param('keep_lock'), FILTER_VALIDATE_BOOLEAN);
+            $this->backupService->stopBackup($migrationId, $keepLock);
 
             return $this->responseFormatter->success([
                 'success' => true,
                 'message' => 'Backup stopped'
             ]);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('stop_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -259,23 +273,36 @@ class BackupController
 
             $migrationId = $chunkData['migration_id'] ?? 'unknown';
 
-            $filename = $this->chunkService->saveChunk($migrationId, $chunkData);
-            $this->chunkService->registerChunk($migrationId, $chunkData);
+            if (!is_string($migrationId) || !PathProvider::isSafeMigrationId($migrationId)) {
+                return $this->responseFormatter->error('invalid_id', 'Invalid migration ID', ['status' => 400]);
+            }
 
-            // If this is a migration_complete chunk, process it immediately
+            $chunkId = $chunkData['chunk_id'] ?? 'unknown';
+            $chunkType = $chunkData['type'];
+
+            if (!is_string($chunkId) || !PathProvider::isSafeChunkToken($chunkId)
+                || !is_string($chunkType) || !PathProvider::isSafeChunkToken($chunkType)) {
+                return $this->responseFormatter->error('invalid_id', 'Invalid chunk ID', ['status' => 400]);
+            }
+
+            // A migration_complete chunk is processed first and saved only when that succeeded
             $isProcessed = false;
             $processingResult = null;
 
             if (isset($chunkData['type']) && $chunkData['type'] === 'migration_complete') {
-                $domainStats = $this->processMigrationComplete($migrationId, $chunkData);
+                $processingResult = $this->processMigrationComplete($migrationId, $chunkData);
                 $isProcessed = true;
-                $processingResult = $domainStats;
             }
+
+            $filename = $this->chunkService->saveChunk($migrationId, $chunkData);
+            $this->chunkService->registerChunk($migrationId, $chunkData);
 
             $result = $this->buildAcknowledgmentResponse($migrationId, $chunkData, $filename, $isProcessed, $processingResult);
 
             return $this->responseFormatter->success($result);
 
+        } catch (InvalidRequestException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
             return $this->responseFormatter->error('collect_failed', $e->getMessage(), ['status' => 500]);
         }
@@ -290,22 +317,40 @@ class BackupController
      */
     private function processMigrationComplete(string $migrationId, array $chunkData): array
     {
-        try {
-            $db = \WordpressMigrator\Helpers\Database::getInstance();
-            $registry = new \WordpressMigrator\Services\Migration\MigrationRegistry($migrationId);
+        $db = \WordpressMigrator\Helpers\Database::getInstance();
+        $registry = new \WordpressMigrator\Services\Migration\MigrationRegistry($migrationId);
 
-            $tableHandler = new \WordpressMigrator\Restore\TableRestoreHandler($db, $registry);
-            $fileHandler = new \WordpressMigrator\Restore\FileRestoreHandler($registry, defined('ABSPATH') ? ABSPATH : getcwd() . '/');
+        $tableHandler = new \WordpressMigrator\Restore\TableRestoreHandler($db, $registry);
+        $fileHandler = new \WordpressMigrator\Restore\FileRestoreHandler($registry, defined('ABSPATH') ? ABSPATH : getcwd() . '/');
 
-            $processor = new \WordpressMigrator\Restore\ChunkProcessor($tableHandler, $fileHandler, $this->chunkService);
+        $processor = new \WordpressMigrator\Restore\ChunkProcessor($tableHandler, $fileHandler, $this->chunkService);
 
-            $result = $processor->process($migrationId, $chunkData);
+        return $processor->process($migrationId, $chunkData);
+    }
 
-            return $result;
-
-        } catch (Exception $e) {
-            return ['error' => $e->getMessage()];
+    /**
+     * The alphabet check rejects an id before it is used as a path.
+     * That rejection is a client error. Every other failure stays a server error.
+     *
+     * @param Exception $e
+     * @param string    $code
+     * @return mixed
+     */
+    private function migrationIdErrorOr(Exception $e, string $code)
+    {
+        if ($e instanceof DestinationNotAllowedException) {
+            return $this->responseFormatter->error('destination_not_allowed', $e->getMessage(), ['status' => 400]);
         }
+
+        if ($e instanceof InvalidRequestException) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
+        }
+
+        if ($e instanceof \InvalidArgumentException && $e->getMessage() === 'Invalid migration ID') {
+            return $this->responseFormatter->error('invalid_id', 'Invalid migration ID', ['status' => 400]);
+        }
+
+        return $this->responseFormatter->error($code, $e->getMessage(), ['status' => 500]);
     }
 
     /**
@@ -374,6 +419,10 @@ class BackupController
 
         if ($processingResult !== null) {
             $response['processing_result'] = $processingResult;
+        }
+
+        if ($isProcessed) {
+            $response['success'] = true;
         }
 
         return $response;

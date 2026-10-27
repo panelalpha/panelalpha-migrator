@@ -142,4 +142,48 @@ final class MigrationStorageServiceTest extends TestCase
         mkdir($directory, 0755, true);
         file_put_contents($directory . 'migration_info.json', JsonCompressor::compressToJson($info));
     }
+
+    public function testSecretsAreKeptOutOfTheWebReadableManifest(): void
+    {
+        $data = [
+            'migrationId' => 'mig_1',
+            'token' => 'destination-secret',
+            'sourceToken' => 'source-secret',
+            'destination_url' => 'https://new.example.com',
+        ];
+
+        $this->storage->saveMigrationData('mig_1', $data);
+
+        $manifest = file_get_contents($this->migrationDir . 'mig_1.json');
+        $this->assertStringNotContainsString('destination-secret', $manifest);
+        $this->assertStringNotContainsString('source-secret', $manifest);
+        $secretFile = $this->migrationDir . 'mig_1.secret.php';
+        $this->assertStringStartsWith("<?php exit; ?>\n", file_get_contents($secretFile));
+        $this->assertStringNotContainsString('source-secret', file_get_contents($secretFile));
+        $this->assertSame('', (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($secretFile)));
+
+        $loaded = $this->storage->loadMigrationData('mig_1');
+        $this->assertSame('destination-secret', $loaded['token']);
+        $this->assertArrayNotHasKey('sourceToken', $loaded);
+        $this->assertSame('https://new.example.com', $loaded['destination_url']);
+    }
+
+    public function testOldManifestWithTheTokenInsideStillLoadsAndMovesOnSave(): void
+    {
+        mkdir($this->migrationDir, 0755, true);
+        file_put_contents($this->migrationDir . 'mig_1.json', JsonCompressor::compressToJson([
+            'token' => 'old-token',
+            'sourceToken' => 'old-source-token',
+            'destination_url' => 'https://new.example.com',
+        ], JSON_UNESCAPED_SLASHES));
+
+        $loaded = $this->storage->loadMigrationData('mig_1');
+        $this->assertSame('old-token', $loaded['token']);
+        $this->assertArrayNotHasKey('sourceToken', $loaded);
+
+        $this->storage->saveMigrationData('mig_1', $loaded);
+
+        $this->assertStringNotContainsString('old-token', file_get_contents($this->migrationDir . 'mig_1.json'));
+        $this->assertSame('old-token', $this->storage->loadMigrationData('mig_1')['token']);
+    }
 }

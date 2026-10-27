@@ -8,6 +8,8 @@ use WordpressMigrator\Services\Scanner\DatabaseScanner;
 use WordpressMigrator\Services\Migration\MigrationStorageService;
 use WordpressMigrator\Helpers\BinarySafeEncoder;
 use WordpressMigrator\Helpers\DateTime;
+use WordpressMigrator\Helpers\DestinationGuard;
+use WordpressMigrator\Helpers\Http;
 use WordpressMigrator\Helpers\PathProvider;
 use WordpressMigrator\Helpers\TokenHelper;
 
@@ -20,6 +22,8 @@ use WordpressMigrator\Helpers\TokenHelper;
  */
 class DatabaseBackupService
 {
+    use DefersMigrationSaves;
+
     use ProgressCalculator;
 
     private DatabaseScanner $dbScanner;
@@ -72,19 +76,11 @@ class DatabaseBackupService
         $destinationUrl = $this->getDestinationUrl();
         $authToken = $this->getAuthToken();
         $sourceUrl = $this->getSourceUrl();
-        $ip = $this->migrationData['ip'] ?? null;
+        $ip = $this->migrationData['pinned_ip'] ?? null;
         $base64 = $this->migrationData['base64'] ?? false;
 
-        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64);
+        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData));
         $this->domainReplacer = new ChunkDomainReplacer($sourceUrl, $destinationUrl);
-    }
-
-    /**
-     * Saves migration data to storage.
-     */
-    private function saveMigrationData(): void
-    {
-        $this->storageService->saveMigrationData($this->migrationId, $this->migrationData);
     }
 
     /**
@@ -121,6 +117,7 @@ class DatabaseBackupService
         $structure = $this->fetchTableStructure($table['name']);
         $response = $this->buildTableStructureResponse($structure);
 
+        $this->assertDestinationAllowed();
         $this->httpSender->send($response);
         $this->markStructureAsSent($tableIndex);
 
@@ -209,6 +206,7 @@ class DatabaseBackupService
         $chunkNumber = $chunkIndex + 1;
         $response = $this->buildTableDataResponse($table, $tableChunk, $chunkNumber, $chunk);
 
+        $this->assertDestinationAllowed();
         $this->httpSender->send($response);
         $this->markChunkAsSent($tableIndex, $chunkIndex);
         $this->updateTableStatus($tableIndex);
@@ -247,7 +245,8 @@ class DatabaseBackupService
      */
     private function buildTableDataResponse(array &$table, $tableChunk, int $chunkNumber, array &$chunk): array
     {
-        $processedData = $this->domainReplacer->replaceInData($tableChunk->data);
+        $rows = $this->withLiveSiteAddress($table['name'], $tableChunk->columns, $tableChunk->data);
+        $processedData = $this->domainReplacer->replaceInData($rows);
 
         $encoded = BinarySafeEncoder::encode($processedData);
         $safeData = $encoded['data'];
@@ -256,7 +255,7 @@ class DatabaseBackupService
         $response = [
             'type' => 'table_data',
             'migration_id' => $this->migrationData['migrationId'],
-            'chunk_id' => $this->generateChunkId($chunkNumber),
+            'chunk_id' => $this->generateChunkId($table['name'], $chunkNumber),
             'table' => [
                 'name' => $table['name'],
                 'chunk_info' => $this->buildChunkInfo($chunkNumber, $table, $chunk, $tableChunk)
@@ -278,12 +277,19 @@ class DatabaseBackupService
     /**
      * Generates a unique ID for a chunk.
      *
+     * @param string $tableName Table the chunk belongs to
      * @param int $chunkNumber Sequential chunk number
      * @return string Formatted chunk ID
      */
-    private function generateChunkId(int $chunkNumber): string
+    private function generateChunkId(string $tableName, int $chunkNumber): string
     {
-        return 'table_chunk_' . str_pad((string)$chunkNumber, 5, '0', STR_PAD_LEFT);
+        $migration = preg_replace('/[^A-Za-z0-9_]/', '_', $this->migrationId);
+        $table = preg_replace('/[^A-Za-z0-9_]/', '_', $tableName);
+        $table = trim((string) $table, '_');
+
+        return trim((string) $migration, '_')
+            . '_' . ($table === '' ? 'unknown' : $table)
+            . '_' . str_pad((string) $chunkNumber, 5, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -407,6 +413,32 @@ class DatabaseBackupService
     }
 
     /**
+     * Refuses a stored destination that points at a private or loopback address.
+     * Runs once for a migration without a pinned IP, then keeps the approved IP.
+     */
+    private function assertDestinationAllowed(): void
+    {
+        $pinned = $this->migrationData['pinned_ip'] ?? null;
+        if (is_string($pinned) && $pinned !== '') {
+            return;
+        }
+
+        $ip = $this->migrationData['ip'] ?? null;
+        $pinned = (new DestinationGuard())->assertAllowed(
+            $this->getDestinationUrl(),
+            is_string($ip) && $ip !== '' ? $ip : null
+        );
+
+        if ($pinned === null) {
+            return;
+        }
+
+        $this->migrationData['pinned_ip'] = $pinned;
+        $this->saveMigrationData();
+        $this->httpSender->setIp($pinned);
+    }
+
+    /**
      * Gets the destination URL from migration data.
      *
      * @return string Destination URL
@@ -441,6 +473,41 @@ class DatabaseBackupService
     }
 
     /**
+     * Puts the site address WordPress uses into the siteurl and home rows.
+     * A host can set the address in wp-config.php and keep an old one in the
+     * database (e.g. Bitnami keeps http://127.0.0.1), which would then reach
+     * the destination untouched by the domain replacement.
+     *
+     * @param string $tableName Table name
+     * @param array  $columns Column names
+     * @param array  $rows Rows with numeric keys
+     * @return array Rows
+     */
+    private function withLiveSiteAddress(string $tableName, array $columns, array $rows): array
+    {
+        $nameColumn = array_search('option_name', $columns, true);
+        $valueColumn = array_search('option_value', $columns, true);
+
+        if ($tableName !== $this->getSourceTablePrefix() . 'options' || $nameColumn === false || $valueColumn === false || !function_exists('get_option')) {
+            return $rows;
+        }
+
+        foreach ($rows as $index => $row) {
+            $option = $row[$nameColumn] ?? null;
+            if ($option !== 'siteurl' && $option !== 'home') {
+                continue;
+            }
+
+            $address = get_option($option);
+            if (is_string($address) && $address !== '') {
+                $rows[$index][$valueColumn] = $address;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
      * Gets the source table prefix from migration data.
      *
      * @return string Source table prefix
@@ -460,8 +527,6 @@ class DatabaseBackupService
      */
     private function getAuthToken(): string
     {
-        return $this->migrationData['token']
-            ?? $this->migrationData['t']
-            ?? TokenHelper::getToken();
+        return TokenHelper::forMigration($this->migrationData);
     }
 }

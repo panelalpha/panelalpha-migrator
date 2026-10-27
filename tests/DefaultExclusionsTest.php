@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace WordpressMigrator\Tests;
 
 use PHPUnit\Framework\TestCase;
+use WordpressMigrator\Api\RouteProvider;
 use WordpressMigrator\Helpers\DefaultExclusions;
+use WordpressMigrator\Helpers\ExclusionParser;
+use WordpressMigrator\Services\Scanner\FileExclusionService;
 
 final class DefaultExclusionsTest extends TestCase
 {
-    private string $defaults = '.htaccess,wp-config.php,wordpress-migrator,wp-content/plugins/wordpress-migrator';
+    private string $defaults = 'wp-config.php,wordpress-migrator,wp-content/plugins/wordpress-migrator';
 
     public function testNoUserExclusionsGivesTheDefaults(): void
     {
@@ -43,5 +46,21 @@ final class DefaultExclusionsTest extends TestCase
         $result = DefaultExclusions::toNewlineFormat('.htaccess, *.log,,cache');
 
         $this->assertSame(".htaccess\n*.log\ncache", $result);
+    }
+
+    public function testOnlyTheRootHtaccessIsExcludedByDefault(): void
+    {
+        $parsed = ExclusionParser::parse(DefaultExclusions::toNewlineFormat(DefaultExclusions::merge(null)));
+        $defaults = RouteProvider::getDefaultExclusions();
+        $exclusion = new FileExclusionService(
+            array_merge($defaults['directories'], $parsed['directories']),
+            $parsed['extensions'],
+            array_merge($defaults['files'], $parsed['files'])
+        );
+
+        $this->assertTrue($exclusion->isExcluded('/site/.htaccess', '/site'));
+        $this->assertTrue($exclusion->isExcluded('/site/wp-config.php', '/site'));
+        $this->assertFalse($exclusion->isExcluded('/site/wp-content/uploads/woocommerce_uploads/.htaccess', '/site'));
+        $this->assertFalse($exclusion->isExcluded('/site/wp-content/uploads/wc-logs/.htaccess', '/site'));
     }
 }

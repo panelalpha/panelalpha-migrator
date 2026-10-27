@@ -58,5 +58,38 @@ class Filesystem
             }
         }
     }
-}
 
+    /**
+     * Replaces a file by renaming a complete temporary file over it.
+     * A crash while writing leaves the previous file intact.
+     * Some hosts let PHP write the file but not create the temporary file next
+     * to it (a read-only folder, or no new .php files on WP Engine); then the
+     * file is written in place.
+     *
+     * @param string $path
+     * @param string $contents
+     * @return bool
+     */
+    public static function writeFileAtomic(string $path, string $contents): bool
+    {
+        $directory = dirname($path);
+        if (!is_dir($directory) && !self::mkdirP($directory)) {
+            return false;
+        }
+
+        $temporary = $path . '.' . bin2hex(random_bytes(4)) . '.tmp.php';
+        $written = @file_put_contents($temporary, $contents, LOCK_EX);
+
+        if ($written === false) {
+            @unlink($temporary);
+            return @file_put_contents($path, $contents, LOCK_EX) === strlen($contents);
+        }
+
+        if (!@rename($temporary, $path)) {
+            @unlink($temporary);
+            return false;
+        }
+
+        return true;
+    }
+}

@@ -99,7 +99,7 @@ class ChunkDomainReplacer
         }
 
         if (is_string($value) && $this->isSerialized($value)) {
-            $unserialized = @unserialize($value);
+            $unserialized = @unserialize($value, ['allowed_classes' => false]);
             if ($unserialized !== false && !$this->containsIncompleteClass($unserialized)) {
                 $replaced = $this->replaceInNestedData($unserialized);
                 return serialize($replaced);

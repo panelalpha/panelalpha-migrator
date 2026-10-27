@@ -40,6 +40,53 @@ class FileRestoreHandler
     }
 
     /**
+     * Deletes WordPress core files that the source does not have, so a
+     * destination on another WordPress version keeps none of its old core.
+     * Works only in wp-admin and wp-includes, and only when the migration
+     * carried the core (wp-includes/version.php is in the manifest).
+     *
+     * @param array $migratedPaths Relative paths of all files in the manifest
+     * @return int Number of deleted files
+     */
+    public function removeStaleCoreFiles(array $migratedPaths): int
+    {
+        $migrated = array_flip(array_map(fn($path) => ltrim(str_replace('\\', '/', (string) $path), '/'), $migratedPaths));
+        $root = realpath($this->abspath);
+
+        if (!isset($migrated['wp-includes/version.php']) || $root === false) {
+            return 0;
+        }
+
+        $removed = 0;
+
+        foreach (['wp-admin', 'wp-includes'] as $directory) {
+            $base = $root . '/' . $directory;
+
+            if (!is_dir($base) || is_link($base)) {
+                continue;
+            }
+
+            $items = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+
+            foreach ($items as $item) {
+                $path = $item->getPathname();
+
+                if ($item->isDir() && !$item->isLink()) {
+                    // Removes only folders left empty.
+                    @rmdir($path);
+                } elseif (!isset($migrated[substr($path, strlen($root) + 1)]) && @unlink($path)) {
+                    $removed++;
+                }
+            }
+        }
+
+        return $removed;
+    }
+
+    /**
      * Restores a single file chunk.
      *
      * @param array $chunkData
@@ -66,21 +113,34 @@ class FileRestoreHandler
         }
 
         $this->validateChecksum($decodedContent, $checksum, $filePath);
+        $this->assertMatchesManifest($filePath, $chunkInfo, strlen($decodedContent));
+
+        if ($this->chunkAlreadyRestored($filePath, (int) $chunkInfo['chunk_number'])) {
+            return [
+                'action' => 'restored_file_chunk',
+                'file' => $filePath,
+                'chunk' => $chunkInfo['chunk_number']
+            ];
+        }
 
         $fullPath = $this->abspath . $filePath;
         $directory = dirname($fullPath);
 
         try {
+            if ($this->resolvesOutsideRoot($fullPath)) {
+                return $this->failChunk($filePath, 'Path resolves outside the WordPress directory through a symlink');
+            }
+
             if (!$this->ensureDirectory($directory)) {
-                return $this->skipFile($chunkData, $filePath, 'Failed to create directory: ' . $directory, false);
+                return $this->failChunk($filePath, 'Failed to create directory: ' . $directory);
             }
 
             if (!is_writable($directory)) {
-                return $this->skipFile($chunkData, $filePath, 'Directory not writable: ' . $directory, false);
+                return $this->failChunk($filePath, 'Directory not writable: ' . $directory);
             }
 
-            if (!$this->writeContent($fullPath, $decodedContent, $chunkInfo['chunk_number'])) {
-                return $this->skipFile($chunkData, $filePath, 'Failed to write file (disk full or permissions issue)', true);
+            if (!$this->writeContent($fullPath, $decodedContent, $chunkInfo)) {
+                return $this->failChunk($filePath, 'Failed to write file (disk full or permissions issue)');
             }
 
             if ($chunkInfo['chunk_number'] === $chunkInfo['total_chunks']) {
@@ -95,8 +155,8 @@ class FileRestoreHandler
                 'chunk' => $chunkInfo['chunk_number']
             ];
 
-        } catch (\Exception $e) {
-            return $this->skipFile($chunkData, $filePath, 'Exception: ' . $e->getMessage(), false);
+        } catch (\Throwable $e) {
+            return $this->failChunk($filePath, 'Exception: ' . $e->getMessage());
         }
     }
 
@@ -108,8 +168,10 @@ class FileRestoreHandler
      */
     private function isExcluded(string $filePath): bool
     {
+        $filePath = strtolower($filePath);
+
         foreach ($this->excludedFiles as $excluded) {
-            if ($filePath === $excluded || strpos($filePath, $excluded) === 0) {
+            if (strpos($filePath, $excluded) === 0) {
                 return true;
             }
         }
@@ -135,6 +197,46 @@ class FileRestoreHandler
     }
 
     /**
+     * Looks at the disk: the target may be a symlink, or its nearest existing
+     * parent may be a symlink that leads out of the WordPress directory.
+     *
+     * @param string $fullPath
+     * @return bool
+     */
+    private function resolvesOutsideRoot(string $fullPath): bool
+    {
+        if (is_link($fullPath)) {
+            return true;
+        }
+
+        $root = realpath($this->abspath);
+
+        if ($root === false) {
+            return true;
+        }
+
+        $parent = dirname($fullPath);
+
+        while (!file_exists($parent)) {
+            if (is_link($parent)) {
+                return true;
+            }
+
+            $next = dirname($parent);
+
+            if ($next === $parent) {
+                return true;
+            }
+
+            $parent = $next;
+        }
+
+        $real = realpath($parent);
+
+        return $real === false || ($real !== $root && !str_starts_with($real, rtrim($root, '/') . '/'));
+    }
+
+    /**
      * Ensures a directory exists.
      *
      * @param string $directory
@@ -152,22 +254,104 @@ class FileRestoreHandler
     }
 
     /**
-     * Writes content to a file.
+     * Writes one chunk at its offset. A repeated write covers the same bytes
+     * and does not append them again or truncate a later chunk.
      *
      * @param string $fullPath
      * @param string $content
+     * @param array  $chunkInfo
+     * @return bool
+     */
+    private function writeContent(string $fullPath, string $content, array $chunkInfo): bool
+    {
+        $chunkNumber = (int) $chunkInfo['chunk_number'];
+
+        if (!array_key_exists('offset', $chunkInfo)) {
+            if ($chunkNumber === 1) {
+                $result = @file_put_contents($fullPath, $content);
+            } else {
+                $result = @file_put_contents($fullPath, $content, FILE_APPEND);
+            }
+
+            return $result !== false;
+        }
+
+        $offset = (int) $chunkInfo['offset'];
+        $total = (int) ($chunkInfo['total_chunks'] ?? $chunkNumber);
+        $handle = @fopen($fullPath, 'c+b');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        try {
+            if (fseek($handle, $offset) !== 0) {
+                return false;
+            }
+
+            $written = fwrite($handle, $content);
+
+            if ($written !== strlen($content)) {
+                return false;
+            }
+
+            if ($chunkNumber === $total) {
+                ftruncate($handle, $offset + strlen($content));
+            }
+
+            return true;
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /**
+     * Checks offset, size and chunk number against the stored manifest when one exists.
+     *
+     * @param string $filePath
+     * @param array  $chunkInfo
+     * @param int    $length
+     * @throws \Exception
+     */
+    private function assertMatchesManifest(string $filePath, array $chunkInfo, int $length): void
+    {
+        $number = (int) ($chunkInfo['chunk_number'] ?? 0);
+        $total = (int) ($chunkInfo['total_chunks'] ?? 0);
+
+        if ($number < 1 || ($total > 0 && $number > $total)) {
+            throw new \Exception('Chunk number does not match the manifest for file: ' . $filePath);
+        }
+
+        if (isset($chunkInfo['size']) && (int) $chunkInfo['size'] !== $length) {
+            throw new \Exception('Chunk size does not match the manifest for file: ' . $filePath);
+        }
+
+        $expected = $this->registry->expectedFileChunk($filePath, $number);
+
+        if ($expected === null) {
+            return;
+        }
+
+        $offset = array_key_exists('offset', $chunkInfo) ? (int) $chunkInfo['offset'] : null;
+
+        if ($offset !== (int) $expected['offset']
+            || $length !== (int) $expected['size']
+            || $number !== (int) $expected['chunk_number']
+        ) {
+            throw new \Exception('Chunk offset, size, or number does not match the manifest for file: ' . $filePath);
+        }
+    }
+
+    /**
+     * A chunk that was already applied is safe to receive again after a lost acknowledgement.
+     *
+     * @param string $filePath
      * @param int    $chunkNumber
      * @return bool
      */
-    private function writeContent(string $fullPath, string $content, int $chunkNumber): bool
+    private function chunkAlreadyRestored(string $filePath, int $chunkNumber): bool
     {
-        if ($chunkNumber === 1) {
-            $result = @file_put_contents($fullPath, $content);
-        } else {
-            $result = @file_put_contents($fullPath, $content, FILE_APPEND);
-        }
-
-        return $result !== false;
+        return $this->registry->hasRestoredFileChunk($filePath, $chunkNumber);
     }
 
     /**
@@ -179,7 +363,7 @@ class FileRestoreHandler
      */
     private function finalizeFile(string $fullPath, string $permissions, ?string $modified): void
     {
-        @chmod($fullPath, octdec($permissions));
+        @chmod($fullPath, octdec($permissions) & 0777);
 
         if ($modified) {
             $timestamp = strtotime($modified);
@@ -190,15 +374,15 @@ class FileRestoreHandler
     }
 
     /**
-     * Skips a file and logs the reason.
+     * Records an intentional exclusion. The chunk is not written, and the reason
+     * is part of the acknowledgement so the source can show the gap.
      *
      * @param array  $chunkData
      * @param string $filePath
      * @param string $reason
-     * @param bool   $canRetry
      * @return array
      */
-    private function skipFile(array $chunkData, string $filePath, string $reason, bool $canRetry = false): array
+    private function skipFile(array $chunkData, string $filePath, string $reason): array
     {
         $this->registry->markChunkRestored('file_chunk', $chunkData);
         $this->logSkippedFile($filePath, $reason);
@@ -207,7 +391,27 @@ class FileRestoreHandler
             'skipped' => true,
             'reason' => $reason,
             'file' => $filePath,
-            'can_retry' => $canRetry
+            'can_retry' => false
+        ];
+    }
+
+    /**
+     * A failed write stays pending so a later attempt can succeed once the cause is gone.
+     *
+     * @param string $filePath
+     * @param string $reason
+     * @return array
+     */
+    private function failChunk(string $filePath, string $reason): array
+    {
+        $this->logSkippedFile($filePath, $reason, 'FAILED');
+
+        return [
+            'failed' => true,
+            'status' => 'pending',
+            'reason' => $reason,
+            'file' => $filePath,
+            'can_retry' => true,
         ];
     }
 
@@ -217,7 +421,7 @@ class FileRestoreHandler
      * @param string $filePath
      * @param string $reason
      */
-    private function logSkippedFile(string $filePath, string $reason): void
+    private function logSkippedFile(string $filePath, string $reason, string $label = 'SKIPPED'): void
     {
         $migrationsDir = Config::get('migration_dir');
 
@@ -228,7 +432,7 @@ class FileRestoreHandler
         $migrationId = $this->registry->getStatus()['migration_id'] ?? 'unknown';
         $logFile = $migrationsDir . 'skipped_files_' . $migrationId . '.log';
         $timestamp = date('Y-m-d H:i:s');
-        $logEntry = "[{$timestamp}] SKIPPED: {$filePath} - Reason: {$reason}\n";
+        $logEntry = "[{$timestamp}] {$label}: {$filePath} - Reason: {$reason}\n";
 
         @file_put_contents($logFile, $logEntry, FILE_APPEND);
     }

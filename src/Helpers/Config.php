@@ -21,7 +21,7 @@ class Config
      * @param string $key
      * @param mixed  $value
      */
-    public static function set(string $key, mixed $value): void
+    public static function set(string $key, $value): void
     {
         self::$config[$key] = $value;
     }
@@ -33,7 +33,7 @@ class Config
      * @param mixed|null $default
      * @return mixed
      */
-    public static function get(string $key, mixed $default = null): mixed
+    public static function get(string $key, $default = null)
     {
         return self::$config[$key] ?? $default;
     }

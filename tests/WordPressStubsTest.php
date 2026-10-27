@@ -7,6 +7,9 @@ namespace WordpressMigrator\Tests;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * @runTestsInSeparateProcesses
+ */
 #[RunTestsInSeparateProcesses]
 final class WordPressStubsTest extends TestCase
 {

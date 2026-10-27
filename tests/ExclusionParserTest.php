@@ -18,11 +18,32 @@ final class ExclusionParserTest extends TestCase
         $this->assertSame([], $result['files']);
     }
 
-    public function testLeadingDotEntryIsAnExtension(): void
+    public function testLeadingDotEntryIsAnExtensionAndAHiddenFolderOrFile(): void
     {
-        $result = ExclusionParser::parse('.htaccess');
+        $result = ExclusionParser::parse('.ddev');
 
-        $this->assertSame(['htaccess'], $result['extensions']);
+        $this->assertSame(['ddev'], $result['extensions']);
+        $this->assertSame(['.ddev'], $result['directories']);
+    }
+
+    public function testLeadingSlashIsDroppedFromADirectory(): void
+    {
+        $result = ExclusionParser::parse("/.ddev\n/wp-content/cache/");
+
+        $this->assertSame(['.ddev', 'wp-content/cache'], $result['directories']);
+        $this->assertSame([], $result['extensions']);
+    }
+
+    public function testDotFoldersAreLeftOutOfTheScan(): void
+    {
+        $result = ExclusionParser::parse(".ddev\n.git\n/node_modules");
+        $exclusion = new \WordpressMigrator\Services\Scanner\FileExclusionService($result['directories'], $result['extensions'], $result['files']);
+
+        $this->assertTrue($exclusion->isExcluded('/site/.ddev/config.yaml', '/site'));
+        $this->assertTrue($exclusion->isExcluded('/site/wp-content/themes/x/.git/HEAD', '/site'));
+        $this->assertTrue($exclusion->isExcluded('/site/node_modules/a.js', '/site'));
+        $this->assertFalse($exclusion->isExcluded('/site/wp-content/uploads/my.ddev.jpg', '/site'));
+        $this->assertFalse($exclusion->isExcluded('/site/wp-content/.gitkeep', '/site'));
     }
 
     public function testNameWithoutDotIsADirectory(): void
@@ -77,5 +98,6 @@ final class ExclusionParserTest extends TestCase
         $result = ExclusionParser::parse('*.log,node_modules');
 
         $this->assertSame(['log,node_modules'], $result['extensions']);
+        $this->assertSame([], $result['directories']);
     }
 }

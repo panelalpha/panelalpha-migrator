@@ -22,6 +22,15 @@ $destinationUrl = $argv[1];
 $sourceUrl = $argv[2] ?? 'http://localhost';
 $batchSize = (int)($argv[3] ?? 50);
 
+$configPath = __DIR__ . '/config.php';
+$config = is_file($configPath) ? include $configPath : [];
+$sourceToken = is_array($config) ? (string) ($config['token'] ?? '') : '';
+
+if ($sourceToken === '') {
+    echo "✗ Error: No token configured in config.php\n";
+    exit(1);
+}
+
 $apiBase = rtrim($sourceUrl, '/') . '/wp-json/wp-migrator/v1';
 
 echo str_repeat("=", 70) . "\n";
@@ -32,7 +41,7 @@ echo "Destination: " . strtok($destinationUrl, '?') . "?token=***\n";
 echo "Batch size:  $batchSize chunks/request\n";
 echo str_repeat("=", 70) . "\n\n";
 
-function makeRequest($url, $data = null) {
+function makeRequest($url, $data = null, $token = '') {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 300);
@@ -42,6 +51,7 @@ function makeRequest($url, $data = null) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
+            'X-Migrator-Token: ' . $token,
         ]);
     }
 
@@ -88,7 +98,7 @@ try {
         'destination_url' => $destinationUrl,
         'backup_database' => true,
         'backup_files' => true,
-    ]);
+    ], $sourceToken);
 
     if (!isset($startResponse['success']) || !$startResponse['success']) {
         throw new Exception("Failed to start migration: " . json_encode($startResponse));
@@ -117,7 +127,7 @@ try {
         $batchResponse = makeRequest("$apiBase/remote-sync/process-batch", [
             'migration_id' => $migrationId,
             'batch_size' => $batchSize,
-        ]);
+        ], $sourceToken);
 
         $batchEnd = microtime(true);
         $batchDuration = $batchEnd - $batchStart;

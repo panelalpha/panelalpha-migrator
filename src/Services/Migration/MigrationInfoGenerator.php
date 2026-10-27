@@ -118,7 +118,19 @@ class MigrationInfoGenerator
     private function generateMigrationId()
     {
         $timestamp = DateTime::currentTime('Ymd_His');
-        return 'mig_' . $timestamp;
+        return 'mig_' . $timestamp . '_' . bin2hex(random_bytes(16));
+    }
+
+    /**
+     * Removes the tokens from migration info that leaves the source.
+     * The destination needs neither the destination token nor the source token.
+     *
+     * @param array $info
+     * @return array
+     */
+    public static function withoutSecrets(array $info): array
+    {
+        return array_diff_key($info, array_flip(['token', 'sourceToken', 'source_token', 'stk']));
     }
 
     /**

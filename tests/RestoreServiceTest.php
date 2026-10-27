@@ -97,8 +97,8 @@ final class RestoreServiceTest extends TestCase
         Config::set('root_path', $root);
         $this->registerCollected('mig_1', [['path' => 'hello.txt', 'total_chunks' => 2]], []);
 
-        $second = $this->fileChunk('hello.txt', 'cd', 2, 2, 'file_chunk_00002');
-        $first = $this->fileChunk('hello.txt', 'ab', 1, 2, 'file_chunk_00001');
+        $second = $this->fileChunk('hello.txt', 'cd', 2, 2, 'file_chunk_00002', 2);
+        $first = $this->fileChunk('hello.txt', 'ab', 1, 2, 'file_chunk_00001', 0);
         $this->chunks->saveChunk('mig_1', $second);
         $this->chunks->registerChunk('mig_1', $second);
         $this->chunks->saveChunk('mig_1', $first);
@@ -152,8 +152,66 @@ final class RestoreServiceTest extends TestCase
         $pdo->sqlite('CREATE TABLE wp_posts (ID INTEGER, post_title TEXT)');
         $restored = $this->restore->restoreDatabaseNextChunk('mig_1');
         $this->assertSame(['action' => 'restored_table_data', 'table' => 'wp_posts', 'chunk' => 1], $restored);
-        $this->assertSame([[1, 'Hello']], $pdo->query('SELECT * FROM wp_posts')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertEquals([[1, 'Hello']], $pdo->query('SELECT * FROM wp_posts')->fetchAll(\PDO::FETCH_NUM));
         $this->assertNull($this->restore->restoreDatabaseNextChunk('mig_1'));
+    }
+
+    public function testChunkOneOfTwoTablesBothSurviveAndARetryDoesNotDuplicateRows(): void
+    {
+        $pdo = new RecordingPdo();
+        FakeDatabase::install($pdo);
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        file_put_contents($root . 'wp-config.php', "<?php\ndefine('DB_NAME', 'db');\ndefine('DB_USER', 'user');\ndefine('DB_HOST', 'db.internal');\n\$table_prefix = 'wp_';\n");
+
+        $this->registerCollected('mig_1', [], [
+            ['name' => 'wp_posts', 'total_chunks' => 1],
+            ['name' => 'wp_users', 'total_chunks' => 1],
+        ]);
+        $posts = $this->tableData('wp_posts', [[1, 'Hello']]);
+        $users = $this->tableData('wp_users', [[7, 'Ada']]);
+        foreach ([$posts, $users] as $chunk) {
+            $this->chunks->saveChunk('mig_1', $chunk);
+            $this->chunks->registerChunk('mig_1', $chunk);
+        }
+        foreach (['wp_posts', 'wp_users'] as $table) {
+            $this->chunks->saveChunk('mig_1', [
+                'type' => 'table_structure',
+                'table' => [
+                    'name' => $table,
+                    'create_statement' => 'CREATE TABLE `' . $table . '` (`ID` bigint, `title` text)',
+                    'indexes' => [],
+                ],
+                'source_table_prefix' => 'wp_',
+            ]);
+            $this->chunks->registerChunk('mig_1', [
+                'type' => 'table_structure',
+                'table' => ['name' => $table],
+            ]);
+        }
+
+        $actions = [];
+        while ($next = $this->restore->restoreDatabaseNextChunk('mig_1')) {
+            if ($next['action'] === 'restored_table_structure') {
+                $pdo->sqlite('CREATE TABLE ' . $next['table'] . ' (ID INTEGER PRIMARY KEY, title TEXT)');
+            }
+            $actions[] = $next['action'] . ':' . ($next['table'] ?? '');
+        }
+
+        $this->assertContains('restored_table_data:wp_posts', $actions);
+        $this->assertContains('restored_table_data:wp_users', $actions);
+        $this->assertEquals([[1, 'Hello']], $pdo->query('SELECT * FROM wp_posts')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertEquals([[7, 'Ada']], $pdo->query('SELECT * FROM wp_users')->fetchAll(\PDO::FETCH_NUM));
+
+        $registry = new MigrationRegistry('mig_1');
+        $handler = new \WordpressMigrator\Restore\TableRestoreHandler(FakeDatabase::install($pdo), $registry);
+        $handler->restoreData($posts);
+        $handler->restoreData($users);
+
+        $this->assertEquals([[1, 'Hello']], $pdo->query('SELECT * FROM wp_posts')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertEquals([[7, 'Ada']], $pdo->query('SELECT * FROM wp_users')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertSame(1, $registry->getStatus()['tables']['wp_posts']['restored_chunks']);
+        $this->assertSame(1, $registry->getStatus()['tables']['wp_users']['restored_chunks']);
     }
 
     private function registerCollected(string $migrationId, array $files, array $tables): void
@@ -168,7 +226,7 @@ final class RestoreServiceTest extends TestCase
         $this->chunks->registerChunk($migrationId, $info);
     }
 
-    private function fileChunk(string $path, string $content, int $number, int $total, string $chunkId): array
+    private function fileChunk(string $path, string $content, int $number, int $total, string $chunkId, int $offset = 0): array
     {
         return [
             'type' => 'file_chunk',
@@ -180,12 +238,26 @@ final class RestoreServiceTest extends TestCase
                 'chunk_info' => [
                     'chunk_number' => $number,
                     'total_chunks' => $total,
-                    'offset' => 0,
+                    'offset' => $offset,
                     'size' => strlen($content),
                 ],
             ],
             'content' => base64_encode($content),
             'checksum' => hash('sha256', $content),
+        ];
+    }
+
+    private function tableData(string $table, array $rows): array
+    {
+        return [
+            'type' => 'table_data',
+            'migration_id' => 'mig_1',
+            'chunk_id' => 'table_chunk_00001',
+            'table' => ['name' => $table, 'chunk_info' => ['chunk_number' => 1, 'total_chunks' => 1]],
+            'columns' => ['ID', 'title'],
+            'data' => $rows,
+            'checksum' => $this->checksum($rows),
+            'source_table_prefix' => 'wp_',
         ];
     }
 

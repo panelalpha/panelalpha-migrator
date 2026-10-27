@@ -6,6 +6,8 @@ namespace WordpressMigrator\Services\Backup;
 
 use WordpressMigrator\Services\Migration\MigrationStorageService;
 use WordpressMigrator\Helpers\DateTime;
+use WordpressMigrator\Helpers\DestinationGuard;
+use WordpressMigrator\Helpers\Http;
 use WordpressMigrator\Helpers\PathProvider;
 use WordpressMigrator\Helpers\TokenHelper;
 
@@ -18,6 +20,8 @@ use WordpressMigrator\Helpers\TokenHelper;
  */
 class FileBackupService
 {
+    use DefersMigrationSaves;
+
     use ProgressCalculator;
 
     private MigrationStorageService $storageService;
@@ -64,18 +68,10 @@ class FileBackupService
     {
         $destinationUrl = $this->getDestinationUrl();
         $authToken = $this->getAuthToken();
-        $ip = $this->migrationData['ip'] ?? null;
+        $ip = $this->migrationData['pinned_ip'] ?? null;
         $base64 = $this->migrationData['base64'] ?? false;
 
-        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64);
-    }
-
-    /**
-     * Saves migration data to storage.
-     */
-    private function saveMigrationData(): void
-    {
-        $this->storageService->saveMigrationData($this->migrationId, $this->migrationData);
+        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData));
     }
 
     /**
@@ -137,8 +133,15 @@ class FileBackupService
         $chunkNumber = $chunkIndex + 1;
         $fullChunk = $this->buildFileChunkResponse($file, $chunk, $content, $chunkNumber);
 
-        $this->httpSender->send($fullChunk);
-        $this->markChunkAsSent($fileIndex, $chunkIndex);
+        $this->assertDestinationAllowed();
+        $acknowledgement = $this->httpSender->send($fullChunk);
+
+        if ($this->isExplicitSkip($acknowledgement)) {
+            $this->markChunkAsSkipped($fileIndex, $chunkIndex, (string) $acknowledgement['result']['reason']);
+        } else {
+            $this->markChunkAsSent($fileIndex, $chunkIndex);
+        }
+
         $this->updateFileStatus($fileIndex);
 
         return $this->buildSimplifiedChunkResponse($file, $chunk, $chunkNumber);
@@ -307,6 +310,23 @@ class FileBackupService
     }
 
     /**
+     * An explicit exclusion is delivered only as a skip with a reason.
+     * A failed or retryable result never reaches this method.
+     *
+     * @param array $acknowledgement
+     * @return bool
+     */
+    private function isExplicitSkip(array $acknowledgement): bool
+    {
+        $result = $acknowledgement['result'] ?? null;
+
+        return is_array($result)
+            && !empty($result['skipped'])
+            && empty($result['can_retry'])
+            && !empty($result['reason']);
+    }
+
+    /**
      * Marks a chunk as sent.
      *
      * @param int $fileIndex File index
@@ -318,6 +338,19 @@ class FileBackupService
     }
 
     /**
+     * Records an intentional exclusion against one chunk.
+     *
+     * @param int    $fileIndex File index
+     * @param int    $chunkIndex Chunk index
+     * @param string $reason Why the destination excluded the file
+     */
+    private function markChunkAsSkipped(int $fileIndex, int $chunkIndex, string $reason): void
+    {
+        $this->migrationData['files'][$fileIndex]['chunks'][$chunkIndex]['status'] = 'skipped';
+        $this->migrationData['files'][$fileIndex]['chunks'][$chunkIndex]['skip_reason'] = $reason;
+    }
+
+    /**
      * Updates the status of a file.
      *
      * @param int $fileIndex File index
@@ -325,12 +358,26 @@ class FileBackupService
     private function updateFileStatus(int $fileIndex): void
     {
         $chunks = $this->migrationData['files'][$fileIndex]['chunks'];
-        $allChunksSent = $this->areAllChunksSent($chunks);
+        $pending = false;
+        $skipped = 0;
+        $sent = 0;
 
-        if ($allChunksSent) {
-            $this->migrationData['files'][$fileIndex]['status'] = 'sent';
+        foreach ($chunks as $chunk) {
+            if (($chunk['status'] ?? '') === 'skipped') {
+                $skipped++;
+            } elseif (($chunk['status'] ?? '') === 'sent') {
+                $sent++;
+            } else {
+                $pending = true;
+            }
+        }
+
+        if ($pending) {
+            $this->migrationData['files'][$fileIndex]['status'] = ($sent > 0 || $skipped > 0) ? 'in_progress' : 'pending';
+        } elseif ($sent === 0 && $skipped > 0) {
+            $this->migrationData['files'][$fileIndex]['status'] = 'skipped';
         } else {
-            $this->migrationData['files'][$fileIndex]['status'] = 'in_progress';
+            $this->migrationData['files'][$fileIndex]['status'] = 'sent';
         }
 
         $this->saveMigrationData();
@@ -353,7 +400,7 @@ class FileBackupService
             'total_files' => $stats['total_files'],
             'completed_files' => $stats['completed_files'],
             'percentage' => $percentage,
-            'is_complete' => $stats['sent_chunks'] === $stats['total_chunks'],
+            'is_complete' => $stats['unresolved_chunks'] === 0,
             'current_file' => $currentFilePath ?? $stats['current_file'],
             'total_size' => $stats['total_size'],
             'sent_size' => $stats['sent_size']
@@ -374,6 +421,7 @@ class FileBackupService
         $currentFile = null;
         $totalSize = 0;
         $sentSize = 0;
+        $unresolvedChunks = 0;
 
         foreach ($this->migrationData['files'] as $file) {
             $totalChunks += $file['totalChunks'];
@@ -393,17 +441,65 @@ class FileBackupService
             }
 
             $sentChunks += $this->countSentChunks($file['chunks']);
+            $unresolvedChunks += $this->countUnresolvedChunks($file['chunks']);
         }
 
         return [
             'total_chunks' => $totalChunks,
             'sent_chunks' => $sentChunks,
+            'unresolved_chunks' => $unresolvedChunks,
             'total_files' => $totalFiles,
             'completed_files' => $completedFiles,
             'current_file' => $currentFile,
             'total_size' => $totalSize,
             'sent_size' => $sentSize
         ];
+    }
+
+    /**
+     * Counts chunks that are neither delivered nor explicitly skipped.
+     *
+     * @param array $chunks
+     * @return int
+     */
+    private function countUnresolvedChunks(array $chunks): int
+    {
+        $count = 0;
+
+        foreach ($chunks as $chunk) {
+            $status = $chunk['status'] ?? '';
+            if ($status !== 'sent' && $status !== 'skipped') {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Refuses a stored destination that points at a private or loopback address.
+     * Runs once for a migration without a pinned IP, then keeps the approved IP.
+     */
+    private function assertDestinationAllowed(): void
+    {
+        $pinned = $this->migrationData['pinned_ip'] ?? null;
+        if (is_string($pinned) && $pinned !== '') {
+            return;
+        }
+
+        $ip = $this->migrationData['ip'] ?? null;
+        $pinned = (new DestinationGuard())->assertAllowed(
+            $this->getDestinationUrl(),
+            is_string($ip) && $ip !== '' ? $ip : null
+        );
+
+        if ($pinned === null) {
+            return;
+        }
+
+        $this->migrationData['pinned_ip'] = $pinned;
+        $this->saveMigrationData();
+        $this->httpSender->setIp($pinned);
     }
 
     /**
@@ -433,8 +529,6 @@ class FileBackupService
      */
     private function getAuthToken(): string
     {
-        return $this->migrationData['token']
-            ?? $this->migrationData['t']
-            ?? TokenHelper::getToken();
+        return TokenHelper::forMigration($this->migrationData);
     }
 }

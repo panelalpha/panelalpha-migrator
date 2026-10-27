@@ -2,7 +2,8 @@
 /**
  * Plugin Name: WordPress Migrator
  * Description: A simple migration plugin for moving WordPress websites to PanelAlpha servers. Easily transfer your site files and database from your current hosting provider.
- * Version: 1.1.4
+ * Version: 1.2.0
+ * Requires PHP: 7.4
  * Author: PanelAlpha
  * Author URI: https://panelalpha.com
  * License: GPL v2 or later
@@ -15,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 
-define('WP_MIGRATOR_VERSION', '1.1.4');
+define('WP_MIGRATOR_VERSION', '1.2.0');
 define('WP_MIGRATOR_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WP_MIGRATOR_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('WP_MIGRATOR_MIGRATION_DIR', WP_CONTENT_DIR . '/migrations/');

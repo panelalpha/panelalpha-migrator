@@ -9,6 +9,9 @@ use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Api\Controllers\RestoreController;
 use WordpressMigrator\Services\Restore\RestoreService;
 
+/**
+ * @runTestsInSeparateProcesses
+ */
 #[RunTestsInSeparateProcesses]
 final class RestoreControllerTest extends TestCase
 {

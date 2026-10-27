@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace WordpressMigrator\Tests;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use WordpressMigrator\Dto\ChunkInfo;
 use WordpressMigrator\Dto\Migration;
 use WordpressMigrator\Dto\MigrationSummary;
+use WordpressMigrator\Dto\TableInfo;
 use WordpressMigrator\Helpers\Config;
+use WordpressMigrator\Helpers\MigrationLock;
 use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
 use WordpressMigrator\Services\Migration\MigrationService;
 use WordpressMigrator\Services\Migration\MigrationStorageService;
@@ -52,11 +56,175 @@ final class MigrationServiceTest extends TestCase
                 && $data['base64'] === true
         ));
 
-        $result = (new MigrationService($databaseScanner, $generator, $storage))
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        $result = (new MigrationService($databaseScanner, $generator, $storage, $lock))
             ->scanAndPrepareMigration('https://new.example.com', "cache/\n*.log", 'destination-token', '192.0.2.1', true);
 
         self::assertSame('mig_test', $result['migrationId']);
+        self::assertFalse($lock->isLocked());
         self::assertSame('destination-token', $result['migrationData']['token']);
+    }
+
+    public function testPinnedIpIsStoredInTheMigrationData(): void
+    {
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        self::writeFile($root . 'index.php', 'home');
+
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->method('scan')->willReturn([]);
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $generator->method('generate')->willReturn(new Migration('mig_pin', 'https://new.example.com', 'now', '6.8', PHP_VERSION, '8.0',
+            'https://old.example.com', 'https://old.example.com', [], [], new MigrationSummary(0, 0, 0, 0, 0, 0, 0, 0)));
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::once())->method('saveMigrationData')->with('mig_pin', self::callback(
+            static fn (array $data): bool => $data['pinned_ip'] === '203.0.113.9'
+        ));
+
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com', null, null, null, false, true, true, '203.0.113.9');
+    }
+
+    public static function insecureTlsStorageCases(): array
+    {
+        return [
+            'manual ip and insecure_tls' => ['192.0.2.1', true, true],
+            'insecure_tls without a manual ip' => [null, true, false],
+            'manual ip only' => ['192.0.2.1', false, false],
+        ];
+    }
+
+    /**
+     * @dataProvider insecureTlsStorageCases
+     */
+    #[DataProvider('insecureTlsStorageCases')]
+    public function testInsecureTlsIsStoredOnlyWithAManualIp(?string $ip, bool $insecureTls, bool $stored): void
+    {
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        self::writeFile($root . 'index.php', 'home');
+
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->method('scan')->willReturn([]);
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $generator->method('generate')->willReturn(new Migration('mig_tls', 'https://new.example.com', 'now', '6.8', PHP_VERSION, '8.0',
+            'https://old.example.com', 'https://old.example.com', [], [], new MigrationSummary(0, 0, 0, 0, 0, 0, 0, 0)));
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::once())->method('saveMigrationData')->with('mig_tls', self::callback(
+            static fn (array $data): bool => array_key_exists('insecure_tls', $data) === $stored
+                && (!$stored || $data['insecure_tls'] === true)
+        ));
+
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com', null, null, $ip, false, true, true, null, $insecureTls);
+    }
+
+    public function testFilesOnlyDoesNotScanTablesAndRecordsTheDatabasePhaseAsDisabled(): void
+    {
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        self::writeFile($root . 'index.php', 'home');
+
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->expects(self::never())->method('scan');
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $generator->expects(self::once())->method('generate')->willReturnCallback(
+            static function (array $files, array $tables, string $url): Migration {
+                self::assertSame(['index.php'], array_map(static fn ($file) => $file->path, $files));
+                self::assertSame([], $tables);
+                return new Migration('mig_files', $url, 'now', '6.8', PHP_VERSION, '8.0',
+                    'https://old.example.com', 'https://old.example.com', $files, $tables,
+                    new MigrationSummary(1, 4, 0, 0, 0, 1, 1, 0));
+            }
+        );
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::once())->method('saveMigrationData')->with('mig_files', self::callback(
+            static fn (array $data): bool => $data['backup_database'] === false
+                && $data['backup_files'] === true
+                && $data['tables'] === []
+                && $data['files'][0]['path'] === 'index.php'
+                && $data['files'][0]['status'] === 'pending'
+        ));
+
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        $result = (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com', null, 'destination-token', null, false, false, true);
+
+        self::assertFalse($result['migrationData']['backup_database']);
+        self::assertTrue($result['migrationData']['backup_files']);
+        self::assertSame([], $result['migrationData']['tables']);
+        self::assertSame('pending', $result['migrationData']['files'][0]['status']);
+    }
+
+    public function testDatabaseOnlyDoesNotScanFilesAndRecordsTheFilesPhaseAsDisabled(): void
+    {
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        self::writeFile($root . 'payload.txt', 'secret');
+
+        $table = new TableInfo('wp_posts', 10, 1, [new ChunkInfo(1, 0, 100)], 1);
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->expects(self::once())->method('scan')->willReturn([$table]);
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $generator->expects(self::once())->method('generate')->willReturnCallback(
+            static function (array $files, array $tables) use ($table): Migration {
+                self::assertSame([], $files);
+                self::assertSame([$table], $tables);
+                return new Migration('mig_db', 'https://new.example.com', 'now', '6.8', PHP_VERSION, '8.0',
+                    'https://old.example.com', 'https://old.example.com', $files, $tables,
+                    new MigrationSummary(0, 0, 1, 10, 1, 1, 0, 1));
+            }
+        );
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::once())->method('saveMigrationData')->with('mig_db', self::callback(
+            static fn (array $data): bool => $data['backup_database'] === true
+                && $data['backup_files'] === false
+                && $data['files'] === []
+                && $data['tables'][0]['name'] === 'wp_posts'
+                && $data['tables'][0]['status'] === 'pending'
+        ));
+
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        $result = (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com', null, null, null, false, true, false);
+
+        self::assertTrue($result['migrationData']['backup_database']);
+        self::assertFalse($result['migrationData']['backup_files']);
+        self::assertSame([], $result['migrationData']['files']);
+    }
+
+    public function testDefaultScanStillPreparesFilesAndTables(): void
+    {
+        $root = $this->createTemporaryDirectory();
+        Config::set('root_path', $root);
+        self::writeFile($root . 'index.php', 'home');
+
+        $table = new TableInfo('wp_options', 4, 1, [new ChunkInfo(1, 0, 100)], 1);
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->expects(self::once())->method('scan')->willReturn([$table]);
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $generator->expects(self::once())->method('generate')->willReturnCallback(
+            static function (array $files, array $tables) use ($table): Migration {
+                self::assertSame(['index.php'], array_map(static fn ($file) => $file->path, $files));
+                self::assertSame([$table], $tables);
+                return new Migration('mig_both', 'https://new.example.com', 'now', '6.8', PHP_VERSION, '8.0',
+                    'https://old.example.com', 'https://old.example.com', $files, $tables,
+                    new MigrationSummary(1, 4, 1, 4, 1, 2, 1, 1));
+            }
+        );
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::once())->method('saveMigrationData')->with('mig_both', self::callback(
+            static fn (array $data): bool => $data['backup_database'] === true
+                && $data['backup_files'] === true
+                && $data['files'][0]['path'] === 'index.php'
+                && $data['tables'][0]['name'] === 'wp_options'
+        ));
+
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com');
     }
 
     public function testMissingMigrationReturnsNullAndDelegatesListAndPath(): void
@@ -88,5 +256,22 @@ final class MigrationServiceTest extends TestCase
 
         self::assertSame(['migrationId' => 'mig_1', 'type' => 'info'], $service->getMigrationInfo('mig_1'));
         self::assertSame(['mi' => 'mig_1', 't' => 'info'], $service->getMigrationInfoRaw('mig_1'));
+    }
+
+    public function testScanRefusesWhileAnotherMigrationHoldsTheLock(): void
+    {
+        $databaseScanner = $this->createMock(DatabaseScanner::class);
+        $databaseScanner->expects(self::never())->method('scan');
+        $generator = $this->createMock(MigrationInfoGenerator::class);
+        $storage = $this->createMock(MigrationStorageService::class);
+        $storage->expects(self::never())->method('saveMigrationData');
+        $lock = new MigrationLock($this->createTemporaryDirectory() . 'lock.json');
+        $lock->acquire('running_mig');
+
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('Another migration is in progress');
+
+        (new MigrationService($databaseScanner, $generator, $storage, $lock))
+            ->scanAndPrepareMigration('https://new.example.com', null, null, null, false, true, false);
     }
 }

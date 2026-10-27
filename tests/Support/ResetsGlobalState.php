@@ -13,6 +13,9 @@ use WordpressMigrator\Helpers\Config;
  */
 trait ResetsGlobalState
 {
+    /**
+     * @after
+     */
     #[After]
     protected function resetGlobalState(): void
     {

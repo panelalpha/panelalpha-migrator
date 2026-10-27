@@ -69,10 +69,11 @@ class Database
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_OBJ,
                 PDO::ATTR_EMULATE_PREPARES => false,
-                PDO::MYSQL_ATTR_INIT_COMMAND => "SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO', SESSION foreign_key_checks = 0"
+                (defined('Pdo\\Mysql::ATTR_INIT_COMMAND') ? \Pdo\Mysql::ATTR_INIT_COMMAND : PDO::MYSQL_ATTR_INIT_COMMAND) => "SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO', SESSION foreign_key_checks = 0"
             ]);
         } catch (PDOException $e) {
-            throw new \Exception('Database connection failed: ' . $e->getMessage());
+            error_log('WordPress Migrator: database connection failed: ' . $e->getMessage());
+            throw new \Exception('Database connection failed');
         }
     }
 
@@ -124,7 +125,7 @@ class Database
      * @param array  $params
      * @return mixed
      */
-    public function getRow(string $query, array $params = []): mixed
+    public function getRow(string $query, array $params = [])
     {
         $stmt = $this->pdo->prepare($query);
         $stmt->execute($params);
@@ -138,7 +139,7 @@ class Database
      * @param array  $params
      * @return mixed
      */
-    public function getVar(string $query, array $params = []): mixed
+    public function getVar(string $query, array $params = [])
     {
         $stmt = $this->pdo->prepare($query);
         $stmt->execute($params);

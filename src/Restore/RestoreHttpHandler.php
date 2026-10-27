@@ -22,7 +22,8 @@ class RestoreHttpHandler
      */
     public function __construct(?string $authToken = null)
     {
-        $this->authToken = $authToken ?? TokenHelper::getToken();
+        $token = $authToken ?? TokenHelper::getToken();
+        $this->authToken = is_string($token) ? $token : '';
     }
 
     /**
@@ -40,7 +41,7 @@ class RestoreHttpHandler
 
         $token = $_SERVER['HTTP_X_MIGRATOR_TOKEN'] ?? $_GET['token'] ?? '';
 
-        if (empty($token)) {
+        if (!is_string($token) || $token === '') {
             $this->sendJson(['error' => 'Unauthorized - missing authentication token'], 401);
         }
 

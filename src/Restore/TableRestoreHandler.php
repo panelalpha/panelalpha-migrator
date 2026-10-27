@@ -100,6 +100,15 @@ class TableRestoreHandler
 
         $this->validateChecksum($data, $checksum);
 
+        $chunkNumber = (int) ($chunkData['table']['chunk_info']['chunk_number'] ?? 0);
+        if ($chunkNumber > 0 && $this->registry->hasRestoredTableChunk($chunkData['table']['name'], $chunkNumber)) {
+            return [
+                'action' => 'restored_table_data',
+                'table' => $tableName,
+                'chunk' => $chunkNumber
+            ];
+        }
+
         if (!empty($chunkData['binary_map'])) {
             $data = BinarySafeEncoder::decode($data, $chunkData['binary_map']);
         }
@@ -235,8 +244,18 @@ class TableRestoreHandler
 
         $stmt = $pdo->prepare($sql);
 
-        foreach ($data as $row) {
-            $stmt->execute($row);
+        // One commit per chunk instead of one per row; a failed chunk leaves no rows behind.
+        $pdo->beginTransaction();
+
+        try {
+            foreach ($data as $row) {
+                $stmt->execute($row);
+            }
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
         }
     }
 }

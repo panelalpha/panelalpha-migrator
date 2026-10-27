@@ -18,7 +18,7 @@ class RequestValidator
      *
      * @param mixed $request
      * @return string
-     * @throws \WP_Error
+     * @throws InvalidRequestException
      */
     public static function getMigrationId($request): string
     {
@@ -36,7 +36,7 @@ class RequestValidator
      *
      * @param mixed $request
      * @return string
-     * @throws \WP_Error
+     * @throws InvalidRequestException
      */
     public static function getDestinationUrl($request): string
     {
@@ -99,12 +99,12 @@ class RequestValidator
      * @param string $code
      * @param string $message
      * @return void
-     * @throws \WP_Error
+     * @throws InvalidRequestException
      */
     private static function throwError(string $code, string $message): void
     {
         if (function_exists('rest_ensure_response')) {
-            throw new \WP_Error($code, $message, ['status' => 400]);
+            throw new InvalidRequestException($code, $message);
         }
 
         http_response_code(400);

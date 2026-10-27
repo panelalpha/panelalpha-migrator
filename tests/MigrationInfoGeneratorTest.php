@@ -40,7 +40,7 @@ final class MigrationInfoGeneratorTest extends TestCase
 
         $migration = (new MigrationInfoGenerator())->generate($files, $tables, 'https://new.example.com');
 
-        self::assertMatchesRegularExpression('/^mig_\d{8}_\d{6}$/', $migration->migrationId);
+        self::assertMatchesRegularExpression('/^mig_\d{8}_\d{6}_[a-f0-9]{32}$/', $migration->migrationId);
         self::assertLessThanOrEqual(2, abs(time() - strtotime($migration->timestamp)));
         self::assertSame('https://new.example.com', $migration->destinationUrl);
         self::assertSame('6.8.3', $migration->wordpressVersion);
@@ -61,6 +61,23 @@ final class MigrationInfoGeneratorTest extends TestCase
             $migration->summary->fileChunks,
             $migration->summary->dbChunks,
         ]);
+    }
+
+    public function testWithoutSecretsRemovesEveryTokenKey(): void
+    {
+        $info = ['migration_id' => 'mig_1', 'token' => 'a', 't' => 'b', 'sourceToken' => 'c', 'source_token' => 'd', 'stk' => 'e'];
+
+        self::assertSame(['migration_id' => 'mig_1', 't' => 'b'], MigrationInfoGenerator::withoutSecrets($info));
+    }
+
+    public function testTwoGenerationsInTheSameSecondDoNotShareAnId(): void
+    {
+        $generator = new MigrationInfoGenerator();
+
+        $first = $generator->generate([], [], 'https://new.example.com')->migrationId;
+        $second = $generator->generate([], [], 'https://new.example.com')->migrationId;
+
+        $this->assertNotSame($first, $second);
     }
 
     public function testEmptyMigrationAndPrefixFromWpConfig(): void
@@ -98,7 +115,7 @@ final class MigrationInfoDatabase extends Database
 {
     public function __construct() {}
 
-    public function getVar(string $query, array $params = []): mixed
+    public function getVar(string $query, array $params = [])
     {
         if ($query !== 'SELECT VERSION()') {
             throw new \LogicException('Unexpected query: ' . $query);

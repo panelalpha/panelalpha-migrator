@@ -61,6 +61,10 @@ class FileScanner
             }
 
             if ($fileInfo->isFile() && $fileInfo->isReadable()) {
+                if ($this->symlinkEscapesRoot($fileInfo, $rootPath)) {
+                    continue;
+                }
+
                 $files[] = $this->createFileInfo($fileInfo, $rootPath);
             }
         }
@@ -98,6 +102,27 @@ class FileScanner
             $chunks,
             $totalChunks
         );
+    }
+
+    /**
+     * A symlink is followed by isFile(). Refuse one whose real path is outside the scan root.
+     */
+    private function symlinkEscapesRoot(SplFileInfo $fileInfo, string $rootPath): bool
+    {
+        if (!$fileInfo->isLink()) {
+            return false;
+        }
+
+        $realPath = $fileInfo->getRealPath();
+        $root = realpath($rootPath);
+        if ($realPath === false || $root === false) {
+            return true;
+        }
+
+        $rootPrefix = rtrim(str_replace('\\', '/', $root), '/') . '/';
+        $normalized = str_replace('\\', '/', $realPath);
+
+        return !str_starts_with($normalized, $rootPrefix);
     }
 
     /**

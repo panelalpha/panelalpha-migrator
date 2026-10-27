@@ -10,9 +10,11 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Helpers\Config;
+use WordpressMigrator\Helpers\DestinationGuard;
 use WordpressMigrator\Helpers\MigrationLock;
 use WordpressMigrator\Services\Backup\BackupService;
 use WordpressMigrator\Services\Migration\MigrationService;
+use WordpressMigrator\Services\Migration\MigrationStorageService;
 use WordpressMigrator\Services\RemoteSync\RemoteSyncExecutor;
 use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
 use WordpressMigrator\Tests\Support\ResetsGlobalState;
@@ -25,19 +27,34 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
 
     private const TOKEN = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
 
-    private MigrationService&MockObject $migrationService;
+    /** @var MigrationService&MockObject */
 
-    private BackupService&MockObject $backupService;
+    private MockObject $migrationService;
 
-    private RemoteSyncExecutor&MockObject $executor;
+    /** @var BackupService&MockObject */
+
+    private MockObject $backupService;
+
+    /** @var RemoteSyncExecutor&MockObject */
+
+    private MockObject $executor;
+
+    /** @var MigrationStorageService&MockObject */
+
+    private MockObject $storage;
 
     protected function setUp(): void
     {
+        $this->storage = $this->createMock(MigrationStorageService::class);
+        $this->storage->method('loadMigrationData')->willReturn(['info_sent' => true]);
         $this->migrationService = $this->createMock(MigrationService::class);
         $this->backupService = $this->createMock(BackupService::class);
         $this->executor = $this->createMock(RemoteSyncExecutor::class);
     }
 
+    /**
+     * @after
+     */
     #[After]
     protected function cleanUpServerGlobals(): void
     {
@@ -55,7 +72,9 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
             $this->migrationService,
             $this->backupService,
             $this->executor,
-            $lock ?? $this->lock()
+            $lock ?? $this->lock(),
+            new DestinationGuard(static fn (string $host): array => ['8.8.8.8']),
+            $this->storage
         );
     }
 
@@ -74,6 +93,9 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         ];
     }
 
+    /**
+     * @dataProvider missingDestinationUrlValues
+     */
     #[DataProvider('missingDestinationUrlValues')]
     public function testMissingDestinationUrlIsRejected(array $options): void
     {
@@ -99,6 +121,44 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->service()->startMigration(['destination_url' => 'mailto:test@example.com']);
     }
 
+    /**
+     * @dataProvider invalidInputOptions
+     */
+    #[DataProvider('invalidInputOptions')]
+    public function testInvalidInputThrowsInvalidArgumentException(array $options): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->service()->startMigration($options);
+    }
+
+    public static function invalidInputOptions(): array
+    {
+        return [
+            'ftp scheme' => [['destination_url' => 'ftp://dest.example.com/?token=' . self::TOKEN]],
+            'bad token format' => [['destination_url' => 'https://dest.example.com/?token=abc']],
+            'no token' => [['destination_url' => 'https://dest.example.com/']],
+            'no phase' => [['destination_url' => 'https://dest.example.com/?token=' . self::TOKEN, 'backup_database' => false, 'backup_files' => false]],
+        ];
+    }
+
+    public function testDestinationSchemeIsAcceptedInAnyCaseAndLowercased(): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with('https://dest.example.com/mig')
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $this->service()->startMigration(['destination_url' => 'HTTPS://dest.example.com/mig?token=' . self::TOKEN]);
+    }
+
+    public function testStatusOfAnUnknownMigrationIsNull(): void
+    {
+        $this->backupService->method('getBackupStatus')->willReturn(['migration_id' => 'mig_1', 'status' => 'not_found']);
+
+        $this->assertNull($this->service()->getMigrationStatus('mig_1'));
+    }
+
     public function testBothBackupFlagsFalseIsRejected(): void
     {
         $this->expectException(Exception::class);
@@ -108,6 +168,64 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
             'backup_database' => false,
             'backup_files' => false,
         ]));
+    }
+
+    public function testBothPhasesOffAsStringsAreRejected(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('At least one of backup_database or backup_files must be true');
+
+        $this->service()->startMigration($this->validOptions([
+            'backup_database' => 'false',
+            'backup_files' => '0',
+        ]));
+    }
+
+    public function testProcessBatchTakesTheLockAgainAfterItExpired(): void
+    {
+        $lock = $this->lock();
+        $this->assertFalse($lock->isLocked());
+
+        $this->backupService->method('getBackupStatus')
+            ->willReturn(['database' => ['status' => 'in_progress'], 'files' => null]);
+        $this->backupService->method('getDatabaseNextChunksBatch')
+            ->willReturn(['processed_chunks' => 1, 'completed' => false]);
+
+        $this->service($lock)->processBatch('mig_1');
+
+        $this->assertTrue($lock->isLocked());
+        $this->assertSame('mig_1', $lock->getLockInfo()['migration_id']);
+    }
+
+    public function testProcessBatchReplacesAStaleLockOfAnotherMigration(): void
+    {
+        $file = $this->createTemporaryDirectory() . 'lock.json';
+        file_put_contents($file, json_encode(['migration_id' => 'old-mig', 'timestamp' => time() - 1000]));
+        $lock = new MigrationLock($file);
+
+        $this->backupService->method('getBackupStatus')
+            ->willReturn(['database' => ['status' => 'in_progress'], 'files' => null]);
+        $this->backupService->method('getDatabaseNextChunksBatch')
+            ->willReturn(['processed_chunks' => 1, 'completed' => false]);
+
+        $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('mig_1', $lock->getLockInfo()['migration_id']);
+    }
+
+    public function testProcessBatchIsRefusedWhileAnotherMigrationHoldsTheLock(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('other-mig');
+
+        $this->backupService->method('getBackupStatus')
+            ->willReturn(['database' => ['status' => 'in_progress'], 'files' => null]);
+        $this->backupService->expects($this->never())->method('getDatabaseNextChunksBatch');
+
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage('Another migration is in progress. Migration ID: other-mig');
+
+        $this->service($lock)->processBatch('mig_1');
     }
 
     public function testUrlWithoutTokenIsRejected(): void
@@ -139,7 +257,9 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
                 $this->anything(),
                 self::TOKEN,
                 null,
-                false
+                false,
+                true,
+                true
             )
             ->willReturn(['migrationId' => 'mig_1']);
 
@@ -150,10 +270,48 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->assertSame('mig_1', $result['migration_id']);
     }
 
+    public static function insecureTlsValues(): array
+    {
+        return [
+            'true' => [true, true],
+            'string true' => ['true', true],
+            'string false' => ['false', false],
+            'missing' => [null, false],
+            'garbage' => ['maybe', false],
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     *
+     * @dataProvider insecureTlsValues
+     */
+    #[DataProvider('insecureTlsValues')]
+    public function testInsecureTlsIsParsedAsABooleanAndPassedToTheScan($value, bool $expected): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with(
+                $this->anything(),
+                $this->anything(),
+                self::TOKEN,
+                '8.8.8.8',
+                false,
+                true,
+                true,
+                $this->anything(),
+                $expected
+            )
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $this->service()->startMigration($this->validOptions(
+            $value === null ? ['ip' => '8.8.8.8'] : ['ip' => '8.8.8.8', 'insecure_tls' => $value]
+        ));
+    }
+
     public function testExclusionsAreMergedWithDefaultsAndPassedInNewlineFormat(): void
     {
         $expected = implode("\n", [
-            '.htaccess',
             'wp-config.php',
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',
@@ -163,7 +321,7 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
 
         $this->migrationService->expects($this->once())
             ->method('scanAndPrepareMigration')
-            ->with($this->anything(), $expected, $this->anything(), $this->anything(), $this->anything())
+            ->with($this->anything(), $expected, $this->anything(), $this->anything(), $this->anything(), true, true)
             ->willReturn(['migrationId' => 'mig_1']);
 
         $this->service()->startMigration($this->validOptions([
@@ -174,7 +332,6 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
     public function testDefaultExclusionsArePassedWhenNoneAreGiven(): void
     {
         $expected = implode("\n", [
-            '.htaccess',
             'wp-config.php',
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',
@@ -182,7 +339,7 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
 
         $this->migrationService->expects($this->once())
             ->method('scanAndPrepareMigration')
-            ->with($this->anything(), $expected, $this->anything(), $this->anything(), $this->anything())
+            ->with($this->anything(), $expected, $this->anything(), $this->anything(), $this->anything(), true, true)
             ->willReturn(['migrationId' => 'mig_1']);
 
         $this->service()->startMigration($this->validOptions());
@@ -192,12 +349,46 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
     {
         $this->migrationService->expects($this->once())
             ->method('scanAndPrepareMigration')
-            ->with($this->anything(), $this->anything(), $this->anything(), '10.0.0.5', true)
+            ->with($this->anything(), $this->anything(), $this->anything(), '8.8.4.4', true, true, true)
             ->willReturn(['migrationId' => 'mig_1']);
 
         $this->service()->startMigration($this->validOptions([
-            'ip' => '10.0.0.5',
+            'ip' => '8.8.4.4',
             'base64' => true,
+        ]));
+    }
+
+    public function testApprovedIpIsForwardedAsThePinnedIp(): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with($this->anything(), $this->anything(), $this->anything(), null, false, true, true, '8.8.8.8')
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $this->service()->startMigration($this->validOptions());
+    }
+
+    public function testPrivateDestinationIsRejectedBeforeAMigrationIsCreated(): void
+    {
+        $this->migrationService->expects($this->never())->method('scanAndPrepareMigration');
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('The destination address is not allowed.');
+
+        $this->service()->startMigration($this->validOptions([
+            'destination_url' => 'https://10.1.2.3/mig?token=' . self::TOKEN,
+        ]));
+    }
+
+    public function testPublicHostPinnedToAPrivateIpIsRejectedBeforeAMigrationIsCreated(): void
+    {
+        $this->migrationService->expects($this->never())->method('scanAndPrepareMigration');
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('The destination address is not allowed.');
+
+        $this->service()->startMigration($this->validOptions([
+            'ip' => '127.0.0.1',
         ]));
     }
 
@@ -611,14 +802,32 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->migrationService->expects($this->once())
             ->method('finalizeMigration')
             ->with('mig_1')
-            ->willReturn(['files' => ['sent' => 3]]);
+            ->willReturn(['success' => true, 'files' => ['sent' => 3]]);
 
         $result = $this->service($lock)->processBatch('mig_1');
 
         $this->assertTrue($result['finalized']);
         $this->assertSame('Migration completed and finalized successfully', $result['message']);
-        $this->assertSame(['files' => ['sent' => 3]], $result['summary']);
+        $this->assertSame(['success' => true, 'files' => ['sent' => 3]], $result['summary']);
         $this->assertFalse($lock->isLocked());
+    }
+
+    public function testFinalizeResultWithSkippedFilesAddsAWarningToTheBatchResponse(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'completed'],
+            'files' => ['status' => 'completed'],
+        ]);
+        $this->migrationService->method('finalizeMigration')
+            ->willReturn(['success' => true, 'skipped_files' => ['a.log'], 'warning' => 'Some files were skipped.']);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertTrue($result['finalized']);
+        $this->assertSame(['a.log'], $result['skipped_files']);
+        $this->assertSame('Some files were skipped.', $result['warning']);
     }
 
     public function testOnlyFilesMigrationSkipsTheDatabasePhaseEntirely(): void
@@ -637,25 +846,317 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->assertSame('files', $result['phase']);
     }
 
-    public function testAlreadyCompletedMigrationReturnsFinalizedWithoutTouchingBackupOrLock(): void
+    public function testCompletedPhasesFinalizeWithTheDestinationBeforeReleasingTheLock(): void
     {
-        $lock = $this->createMock(MigrationLock::class);
-        $lock->expects($this->never())->method('release');
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
         $this->backupService->expects($this->once())->method('getBackupStatus')->willReturn([
             'database' => ['status' => 'completed'],
             'files' => ['status' => 'completed'],
         ]);
-        $this->migrationService->expects($this->never())->method('finalizeMigration');
+        $this->migrationService->expects($this->once())->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
         $this->backupService->expects($this->never())->method('getDatabaseNextChunksBatch');
         $this->backupService->expects($this->never())->method('getFileNextChunksBatch');
 
         $result = $this->service($lock)->processBatch('mig_1');
 
         $this->assertSame('mig_1', $result['migration_id']);
-        $this->assertSame('completed', $result['phase']);
+        $this->assertTrue($result['finalized']);
+        $this->assertSame(['success' => true], $result['summary']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testFinalizationFailureIsNotSuccessAndKeepsTheLock(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'completed'],
+            'files' => ['status' => 'completed'],
+        ]);
+        $this->migrationService->method('finalizeMigration')
+            ->willThrowException(new Exception('Destination returned error: 503'));
+
+        try {
+            $this->service($lock)->processBatch('mig_1');
+            $this->fail('A failed destination finalization must not look complete');
+        } catch (Exception $exception) {
+            $this->assertSame('Destination returned error: 503', $exception->getMessage());
+        }
+
+        $this->assertTrue($lock->isLocked());
+    }
+
+    public function testRetryAfterALostFinalizationResponseFinishesTheJob(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'completed'],
+            'files' => ['status' => 'completed'],
+        ]);
+        $this->migrationService->expects($this->exactly(2))->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
+        $service = $this->service($lock);
+
+        $first = $service->processBatch('mig_1');
+        $lock->acquire('mig_1');
+        $second = $service->processBatch('mig_1');
+
+        $this->assertTrue($first['finalized']);
+        $this->assertTrue($second['finalized']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testFilesOnlySelectionIsPassedToTheScanAndStartsAtFiles(): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with($this->anything(), $this->anything(), self::TOKEN, null, false, false, true)
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $result = $this->service()->startMigration($this->validOptions([
+            'backup_database' => false,
+            'backup_files' => true,
+        ]));
+
+        $this->assertSame('files', $result['next_phase']);
+    }
+
+    public function testDatabaseOnlySelectionIsPassedToTheScanAndStartsAtDatabase(): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with($this->anything(), $this->anything(), self::TOKEN, null, false, true, false)
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $result = $this->service()->startMigration($this->validOptions([
+            'backup_database' => true,
+            'backup_files' => false,
+        ]));
+
+        $this->assertSame('database', $result['next_phase']);
+    }
+
+    public static function phaseFlagValues(): array
+    {
+        return [
+            'string false' => ['false', false],
+            'string zero' => ['0', false],
+            'bool false' => [false, false],
+            'string true' => ['true', true],
+            'string one' => ['1', true],
+            'missing' => [null, true],
+        ];
+    }
+
+    /**
+     * @dataProvider phaseFlagValues
+     */
+    #[DataProvider('phaseFlagValues')]
+    public function testBackupFilesFlagIsReadAsABoolean($value, bool $expected): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with($this->anything(), $this->anything(), self::TOKEN, null, false, true, $expected)
+            ->willReturn(['migrationId' => 'mig_1']);
+        $options = ['backup_database' => true];
+        if ($value !== null) {
+            $options['backup_files'] = $value;
+        }
+
+        $this->service()->startMigration($this->validOptions($options));
+    }
+
+    public function testDefaultSelectionStillPreparesBothPhases(): void
+    {
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with($this->anything(), $this->anything(), self::TOKEN, null, false, true, true)
+            ->willReturn(['migrationId' => 'mig_1']);
+
+        $result = $this->service()->startMigration($this->validOptions());
+
+        $this->assertSame('database', $result['next_phase']);
+    }
+
+    public function testFilesOnlySendsNoDatabaseChunksAndFinishesWhenFilesComplete(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturnOnConsecutiveCalls(
+            ['database' => ['status' => 'disabled'], 'files' => ['status' => 'pending']],
+            ['database' => ['status' => 'disabled'], 'files' => ['percentage' => 100, 'skipped_files' => []]],
+            ['database' => ['status' => 'disabled'], 'files' => ['status' => 'completed']]
+        );
+        $this->backupService->expects($this->once())->method('getFileNextChunksBatch')
+            ->with('mig_1', 50)
+            ->willReturn(['processed_chunks' => 1, 'completed' => true]);
+        $this->backupService->expects($this->never())->method('getDatabaseNextChunksBatch');
+        $this->migrationService->expects($this->once())->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('files', $result['phase']);
+        $this->assertSame(1, $result['processed_chunks']);
+        $this->assertTrue($result['finalized']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testFilesOnlyDoesNotFinishWhileTheRequestedFilesPhaseIsStillPending(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturnOnConsecutiveCalls(
+            ['database' => ['status' => 'disabled'], 'files' => ['status' => 'pending']],
+            ['database' => ['status' => 'disabled'], 'files' => ['percentage' => 0, 'skipped_files' => []]],
+            ['database' => ['status' => 'disabled'], 'files' => ['status' => 'pending']]
+        );
+        $this->backupService->expects($this->once())->method('getFileNextChunksBatch')
+            ->willReturn(['processed_chunks' => 1, 'completed' => false]);
+        $this->backupService->expects($this->never())->method('getDatabaseNextChunksBatch');
+        $this->migrationService->expects($this->never())->method('finalizeMigration');
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('files', $result['phase']);
+        $this->assertFalse($result['completed']);
+        $this->assertArrayNotHasKey('finalized', $result);
+        $this->assertTrue($lock->isLocked());
+    }
+
+    public function testFilesOnlyStillRunsTheFilesPhaseWhenThatManifestIsEmpty(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'disabled'],
+            'files' => null,
+        ]);
+        $this->backupService->expects($this->once())->method('getFileNextChunksBatch')
+            ->with('mig_1', 50)
+            ->willReturn(['processed_chunks' => 0, 'completed' => true]);
+        $this->backupService->expects($this->never())->method('getDatabaseNextChunksBatch');
+        $this->migrationService->expects($this->once())->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('files', $result['phase']);
         $this->assertSame(0, $result['processed_chunks']);
         $this->assertTrue($result['finalized']);
-        $this->assertTrue($result['completed']);
-        $this->assertSame('Migration is already completed', $result['message']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testDatabaseOnlySendsNoFileChunksAndFinishesWhenTheDatabasePhaseCompletes(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturnOnConsecutiveCalls(
+            ['database' => ['status' => 'in_progress', 'percentage' => 50], 'files' => ['status' => 'disabled']],
+            [
+                'database' => [
+                    'status' => 'completed',
+                    'percentage' => 100,
+                    'current_table' => null,
+                    'next_table' => null,
+                    'sent_chunks' => 2,
+                    'total_chunks' => 2,
+                ],
+                'files' => ['status' => 'disabled'],
+            ],
+            ['database' => ['status' => 'completed'], 'files' => ['status' => 'disabled']]
+        );
+        $this->backupService->expects($this->once())->method('getDatabaseNextChunksBatch')
+            ->with('mig_1', 50)
+            ->willReturn(['processed_chunks' => 2, 'completed' => true]);
+        $this->backupService->expects($this->never())->method('getFileNextChunksBatch');
+        $this->migrationService->expects($this->once())->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('database', $result['phase']);
+        $this->assertSame(2, $result['processed_chunks']);
+        $this->assertTrue($result['finalized']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testDatabaseOnlyStillRunsTheDatabasePhaseWhenThatManifestIsEmpty(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => null,
+            'files' => ['status' => 'disabled'],
+        ]);
+        $this->backupService->expects($this->once())->method('getDatabaseNextChunksBatch')
+            ->with('mig_1', 50)
+            ->willReturn(['processed_chunks' => 0, 'completed' => true]);
+        $this->backupService->expects($this->never())->method('getFileNextChunksBatch');
+        $this->migrationService->expects($this->once())->method('finalizeMigration')
+            ->with('mig_1')
+            ->willReturn(['success' => true]);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertSame('database', $result['phase']);
+        $this->assertSame(0, $result['processed_chunks']);
+        $this->assertTrue($result['finalized']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testEmptySelectedPhaseWithADisabledPhaseIsNotReportedComplete(): void
+    {
+        Config::set('migration_dir', $this->createTemporaryDirectory());
+        $storage = new MigrationStorageService();
+        $storage->saveMigrationData('mig_1', [
+            'backup_database' => false,
+            'backup_files' => true,
+            'tables' => [],
+            'files' => [],
+        ]);
+        $service = new RemoteSyncOrchestrationService(
+            $this->migrationService,
+            new BackupService(null, $storage),
+            $this->executor,
+            $this->lock()
+        );
+
+        $status = $service->getMigrationStatus('mig_1');
+
+        $this->assertSame('idle', $status['status']);
+        $this->assertNotSame('completed', $status['phase']);
+        $this->assertNotSame('Migration completed successfully', $status['message']);
+    }
+
+    public function testDisabledDatabaseDoesNotDiluteTheFilesProgress(): void
+    {
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'status' => 'in_progress',
+            'backup_running' => true,
+            'database' => ['status' => 'disabled', 'percentage' => 0],
+            'files' => [
+                'status' => 'in_progress',
+                'completed_files' => 1,
+                'total_files' => 2,
+                'sent_chunks' => 1,
+                'total_chunks' => 2,
+                'percentage' => 50,
+            ],
+        ]);
+
+        $status = $this->service()->getMigrationStatus('mig_1');
+
+        $this->assertSame('backup_files', $status['phase']);
+        $this->assertSame(50, $status['percentage']);
+        $this->assertSame('disabled', $status['database']['status']);
     }
 }

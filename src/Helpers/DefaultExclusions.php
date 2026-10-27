@@ -16,8 +16,9 @@ class DefaultExclusions
      */
     public static function get(): array
     {
+        // The root .htaccess is left out by the scanner and sent on its own.
+        // Listing it here would drop every nested .htaccess too (e.g. WooCommerce uploads).
         return [
-            '.htaccess',
             'wp-config.php',
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',

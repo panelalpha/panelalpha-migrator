@@ -219,7 +219,9 @@ class RouteProvider
         register_rest_route('wp-migrator/v1', '/collect-chunk', [
             'methods' => 'POST',
             'callback' => [$this->backupController, 'collectChunk'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/restore/files/next-chunk', [
@@ -266,7 +268,9 @@ class RouteProvider
         register_rest_route('wp-migrator/v1', '/migration-complete', [
             'methods' => 'POST',
             'callback' => [$this->migrationController, 'complete'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/token/current', [
@@ -288,25 +292,33 @@ class RouteProvider
         register_rest_route('wp-migrator/v1', '/remote-sync', [
             'methods' => 'POST',
             'callback' => [$this->remoteSyncOrchestrationController, 'start'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/remote-sync/status/(?P<migration_id>[a-zA-Z0-9_]+)', [
             'methods' => 'GET',
             'callback' => [$this->remoteSyncOrchestrationController, 'getStatus'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/remote-sync/process-batch', [
             'methods' => 'POST',
             'callback' => [$this->remoteSyncOrchestrationController, 'processBatch'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/transfer-htaccess', [
             'methods' => 'POST',
             'callback' => [$this->migrationController, 'transferHtaccess'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => function($request) {
+                return current_user_can('manage_options') || TokenController::validateToken($request);
+            },
         ]);
 
         register_rest_route('wp-migrator/v1', '/receive-htaccess', [

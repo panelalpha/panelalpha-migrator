@@ -26,14 +26,39 @@ if (file_exists($directory . '/rules.json')) {
 }
 
 $status = 200;
-$body = '{"success":true}';
+$body = null;
 
 foreach ($rules as $rule) {
-    if (str_contains($entry['uri'], $rule['match'])) {
+    if (strpos($entry['uri'], $rule['match']) !== false) {
         $status = $rule['status'];
         $body = $rule['body'];
         break;
     }
+}
+
+if ($body === null) {
+    $payload = ['success' => true];
+
+    if (strpos($entry['uri'], 'restore.php') !== false) {
+        $request = json_decode($entry['body'], true);
+        if (!is_array($request)) {
+            $decoded = base64_decode($entry['body'], true);
+            $request = is_string($decoded) ? json_decode($decoded, true) : null;
+        }
+
+        if (is_array($request)) {
+            $migrationId = $request['migration_id'] ?? $request['m'] ?? null;
+            $chunkId = $request['chunk_id'] ?? $request['c'] ?? null;
+            if ($migrationId !== null) {
+                $payload['migration_id'] = $migrationId;
+            }
+            if ($chunkId !== null) {
+                $payload['chunk_id'] = $chunkId;
+            }
+        }
+    }
+
+    $body = json_encode($payload);
 }
 
 http_response_code($status);

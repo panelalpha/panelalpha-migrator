@@ -21,6 +21,7 @@ class ChunkHttpSender
     private string $authToken;
     private ?string $ip;
     private bool $useBase64;
+    private array $tlsArgs;
 
     /**
      * ChunkHttpSender constructor.
@@ -29,13 +30,23 @@ class ChunkHttpSender
      * @param string $authToken Authentication token
      * @param string|null $ip Optional IP address to override host
      * @param bool $useBase64 Whether to use base64 encoding for requests
+     * @param array $tlsArgs Extra Http::post arguments for TLS, from Http::tlsArgs()
      */
-    public function __construct(string $destinationUrl, string $authToken, ?string $ip = null, bool $useBase64 = false)
+    public function __construct(string $destinationUrl, string $authToken, ?string $ip = null, bool $useBase64 = false, array $tlsArgs = [])
     {
         $this->destinationUrl = $destinationUrl;
         $this->authToken = $authToken;
         $this->ip = $ip;
         $this->useBase64 = $useBase64;
+        $this->tlsArgs = $tlsArgs;
+    }
+
+    /**
+     * Sets the IP the connection is pinned to.
+     */
+    public function setIp(?string $ip): void
+    {
+        $this->ip = $ip;
     }
 
     /**
@@ -51,7 +62,7 @@ class ChunkHttpSender
         $response = $this->useBase64
             ? $this->sendHttpRequestBase64($endpoint, $chunkData)
             : $this->sendHttpRequest($endpoint, $chunkData);
-        $this->validateResponse($response);
+        $this->validateResponse($response, $chunkData);
 
         return json_decode(Http::retrieveBody($response), true);
     }
@@ -83,12 +94,13 @@ class ChunkHttpSender
             ],
             'body' => JsonCompressor::compressToJson($chunkData),
             'timeout' => 120,
-            'sslverify' => false
         ];
 
         if (!empty($this->ip)) {
             $httpArgs['ip'] = $this->ip;
         }
+
+        $httpArgs = array_merge($httpArgs, $this->tlsArgs);
 
         return Http::post($endpoint, $httpArgs);
     }
@@ -114,33 +126,58 @@ class ChunkHttpSender
             ],
             'body' => $encodedBody,
             'timeout' => 120,
-            'sslverify' => false
         ];
 
         if (!empty($this->ip)) {
             $httpArgs['ip'] = $this->ip;
         }
 
+        $httpArgs = array_merge($httpArgs, $this->tlsArgs);
+
         return Http::post($endpoint, $httpArgs);
     }
 
     /**
      * Validates the HTTP response from destination.
+     * A 2xx status is not enough: the acknowledgement has to succeed for this
+     * migration and chunk, and a failed or retryable result is not delivery.
      *
      * @param mixed $response HTTP response object
+     * @param array $chunkData Chunk that was sent
      * @throws \Exception If response indicates an error
      */
-    private function validateResponse($response): void
+    private function validateResponse($response, array $chunkData): void
     {
         if (Http::isError($response)) {
             throw new \Exception('Failed to send chunk: ' . $response->getErrorMessage());
         }
 
         $statusCode = Http::retrieveResponseCode($response);
+        $body = Http::retrieveBody($response);
 
         if ($statusCode < 200 || $statusCode >= 300) {
-            $body = Http::retrieveBody($response);
-            throw new \Exception('Destination returned error: ' . $statusCode . ' - ' . $body);
+            throw new \Exception('Destination returned error: ' . $statusCode . ' - ' . substr((string) $body, 0, 300));
+        }
+
+        $decoded = json_decode($body, true);
+
+        if (!is_array($decoded) || empty($decoded['success'])) {
+            throw new \Exception('Destination acknowledgement was not successful');
+        }
+
+        if (($decoded['migration_id'] ?? null) !== ($chunkData['migration_id'] ?? null)) {
+            throw new \Exception('Destination acknowledgement migration id does not match');
+        }
+
+        if (array_key_exists('chunk_id', $chunkData) && ($decoded['chunk_id'] ?? null) !== $chunkData['chunk_id']) {
+            throw new \Exception('Destination acknowledgement chunk id does not match');
+        }
+
+        $result = $decoded['result'] ?? null;
+
+        if (is_array($result) && (!empty($result['failed']) || !empty($result['can_retry']))) {
+            $reason = $result['reason'] ?? 'chunk was not delivered';
+            throw new \Exception('Destination did not deliver the chunk: ' . $reason);
         }
     }
 }

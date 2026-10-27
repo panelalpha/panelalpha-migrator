@@ -79,6 +79,9 @@ final class RestoreHttpHandlerTest extends TestCase
         $this->assertSame('mig_1', $handler->getMigrationId());
     }
 
+    /**
+     * @runInSeparateProcess
+     */
     #[RunInSeparateProcess]
     public function testTokenDefaultsToTheOneInConfigPhp(): void
     {

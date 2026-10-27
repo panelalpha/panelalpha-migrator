@@ -11,6 +11,8 @@ use WordpressMigrator\Api\Middleware\ResponseFormatter;
 /**
  * Each test runs in its own process because it defines the global rest_ensure_response()
  * function and WP_Error/WP_REST_Response classes, which must not leak into other tests.
+ *
+ * @runTestsInSeparateProcesses
  */
 #[RunTestsInSeparateProcesses]
 final class ResponseFormatterTest extends TestCase
