@@ -22,7 +22,7 @@ These are always left out:
 | `wp-content/migrations/` | The plugin's working files. |
 | `node_modules`, `.git` and `.svn` folders, wherever they are | Development files a live site does not need. |
 
-A file that disappears from the source while the migration runs is skipped, and the migration continues.
+A file that disappears from the source while the migration runs, such as a cache or log file, is skipped, and the migration still finishes. The dashboard then shows a warning with the number of skipped files, and the API answer lists them: [Check the result](../01-getting-started/after-the-migration.md#files-the-migration-left-out).
 
 ## Leave something out
 
@@ -39,10 +39,10 @@ backup-old
 - `backup-old`, a name without a dot, is every folder with that name, wherever it appears.
 - `error.txt`, a name with a dot, is that file in the main folder only.
 
-The hint under the box shows the examples separated by commas. In version 1.1.4 only one item per line is read correctly on this page.
+The hint under the box shows the examples separated by commas. In version 1.2.0 only one item per line is read correctly on this page.
 
-To copy only the database, or only the files, clear the other box under **Backup Content**.
+To copy only the database, or only the files, clear the other box under **Backup Content**. Only the part you keep selected is sent, and the other part stays as it is on the destination.
 
 ## From the API
 
-The same choices are available when PanelAlpha or a script starts the migration: `backup_database`, `backup_files` and `exclusions` in [Migrate over the API](../03-api/migrate-over-the-api.md#start-the-migration). A migration started over the API also leaves out every `.htaccess` file in any folder, and any folder named `wordpress-migrator`. The main folder's `.htaccess` can be sent separately afterwards: [Send the .htaccess file](../03-api/migrate-over-the-api.md#send-the-htaccess-file).
+The same choices are available when PanelAlpha or a script starts the migration: `backup_database`, `backup_files` and `exclusions` (commas or new lines both work there) in [Migrate over the API](../03-api/migrate-over-the-api.md#start-the-migration). A migration started over the API also leaves out any folder named `wordpress-migrator`. Other `.htaccess` files, such as the ones that protect WooCommerce uploads, are copied. The main folder's `.htaccess` can be sent separately afterwards: [Send the .htaccess file](../03-api/migrate-over-the-api.md#send-the-htaccess-file).

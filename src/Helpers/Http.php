@@ -20,7 +20,7 @@ class Http
      * @param array  $args
      * @return HttpResponse|HttpError
      */
-    public static function post(string $url, array $args = []): HttpResponse|HttpError
+    public static function post(string $url, array $args = [])
     {
         $headers = $args['headers'] ?? [];
         $body = $args['body'] ?? '';
@@ -32,15 +32,16 @@ class Http
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
-        if (!empty($ip)) {
-            $parsedUrl = parse_url($url);
-            $host = $parsedUrl['host'] ?? '';
+        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
+            curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        }
+        if (defined('CURLOPT_REDIR_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
+            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        }
 
-            if (!empty($host)) {
-                $resolve = [
-                    "$host:80:$ip",
-                    "$host:443:$ip"
-                ];
+        if (!empty($ip)) {
+            $resolve = self::resolveEntries($url, $ip);
+            if ($resolve !== []) {
                 curl_setopt($ch, CURLOPT_RESOLVE, $resolve);
             }
         }
@@ -62,8 +63,6 @@ class Http
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
 
-        curl_close($ch);
-
         if ($error) {
             return new HttpError($error);
         }
@@ -72,12 +71,61 @@ class Http
     }
 
     /**
+     * Extra Http::post arguments for a migration: skips the HTTPS certificate
+     * check only when the migration has a manual IP and insecure_tls turned on.
+     *
+     * @param array $migrationData
+     * @return array
+     */
+    public static function tlsArgs(array $migrationData): array
+    {
+        if (!empty($migrationData['ip']) && ($migrationData['insecure_tls'] ?? false) === true) {
+            return ['sslverify' => false];
+        }
+
+        return [];
+    }
+
+    /**
+     * Pins the hostname to the manual IP on the URL port, or the scheme default.
+     * Returns no entry when the IP is not a single valid IP address.
+     *
+     * @return list<string>
+     */
+    private static function resolveEntries(string $url, string $ip): array
+    {
+        $parsedUrl = parse_url($url);
+        if (!is_array($parsedUrl)) {
+            return [];
+        }
+
+        $host = $parsedUrl['host'] ?? '';
+
+        if ($host === '') {
+            return [];
+        }
+
+        if (filter_var(trim($ip, '[]'), FILTER_VALIDATE_IP) === false) {
+            return [];
+        }
+
+        $scheme = strtolower($parsedUrl['scheme'] ?? 'http');
+        $port = $parsedUrl['port'] ?? ($scheme === 'https' ? 443 : 80);
+
+        if (str_contains($ip, ':') && !str_starts_with($ip, '[')) {
+            $ip = "[$ip]";
+        }
+
+        return ["$host:$port:$ip"];
+    }
+
+    /**
      * Checks if a response is an error.
      *
      * @param mixed $response
      * @return bool
      */
-    public static function isError(mixed $response): bool
+    public static function isError($response): bool
     {
         return $response instanceof HttpError;
     }
@@ -99,7 +147,7 @@ class Http
      * @param HttpResponse $response
      * @return string|false
      */
-    public static function retrieveBody(HttpResponse $response): string|false
+    public static function retrieveBody(HttpResponse $response)
     {
         return $response->getBody();
     }

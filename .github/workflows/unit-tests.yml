@@ -6,19 +6,34 @@ on:
 
 jobs:
   unit:
-    name: PHP 8.3 unit tests
+    name: PHP ${{ matrix.php }} unit tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
-          coverage: pcov
+          php-version: ${{ matrix.php }}
+          coverage: ${{ matrix.php == '8.3' && 'pcov' || 'none' }}
 
+      # composer.lock has PHPUnit 11, which needs PHP 8.2. Older PHP gets PHPUnit 9.6 or 10.5.
       - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist
+        run: |
+          if php -r 'exit(PHP_VERSION_ID >= 80200 ? 0 : 1);'; then
+            composer install --no-interaction --prefer-dist
+          else
+            composer update phpunit/phpunit --with-all-dependencies --no-interaction --prefer-dist
+          fi
 
       - name: Run unit tests
+        if: matrix.php != '8.3'
+        run: composer test
+
+      - name: Run unit tests with coverage
+        if: matrix.php == '8.3'
         run: composer test -- --coverage-text --only-summary-for-coverage-text

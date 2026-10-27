@@ -37,7 +37,7 @@ so also say how you verified the change by hand, and on which WordPress, PHP and
 ## Checklist
 
 - [ ] My commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`)
-- [ ] I updated [`documentation/`](../blob/master/documentation/README.md) where a user would notice the change
+- [ ] I updated [`docs/`](https://github.com/panelalpha/panelalpha-wordpress-migrator/blob/main/docs/README.md) where a user would notice the change
 - [ ] I bumped the version in `wordpress-migrator.php` if this is a release
 - [ ] `composer.lock` is updated if I changed `composer.json`
 - [ ] This PR is focused on a single change

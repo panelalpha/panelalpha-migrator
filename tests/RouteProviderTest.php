@@ -11,6 +11,9 @@ namespace WordpressMigrator\Tests;
     use WordpressMigrator\Helpers\TokenHelper;
     use WordpressMigrator\Tests\Support\TemporaryDirectory;
 
+    /**
+     * @runTestsInSeparateProcesses
+     */
     #[RunTestsInSeparateProcesses]
     final class RouteProviderTest extends TestCase
     {
@@ -29,7 +32,11 @@ namespace WordpressMigrator\Tests;
             $reflection = new ReflectionClass(RouteProvider::class);
             $provider = $reflection->newInstanceWithoutConstructor();
             foreach (['migrationController', 'backupController', 'restoreController', 'tokenController', 'remoteSyncOrchestrationController'] as $property) {
-                $reflection->getProperty($property)->setValue($provider, new stdClass());
+                $reflectionProperty = $reflection->getProperty($property);
+                if (PHP_VERSION_ID < 80100) {
+                    $reflectionProperty->setAccessible(true);
+                }
+                $reflectionProperty->setValue($provider, new stdClass());
             }
             $provider->registerWordPressRoutes();
             $this->routes = $GLOBALS['route_provider_registered_routes'];
@@ -79,14 +86,31 @@ namespace WordpressMigrator\Tests;
             }
         }
 
-        public function testCollectChunkAndOtherPublicRoutesHaveNoPermissionCheck(): void
+        public function testCollectChunkAndOtherRoutesAcceptAdminOrValidToken(): void
         {
-            foreach ([
+            require __DIR__ . '/Support/WordPressStubs.php';
+            $valid = new \WP_REST_Request([], ['X-Migrator-Token' => TokenHelper::getToken()]);
+            $query = new \WP_REST_Request(['token' => TokenHelper::getToken()]);
+            $invalid = new \WP_REST_Request([], ['X-Migrator-Token' => 'wrong']);
+            $anonymous = new \WP_REST_Request();
+            $routes = [
                 '/collect-chunk', '/migration-complete', '/remote-sync',
                 '/remote-sync/status/(?P<migration_id>[a-zA-Z0-9_]+)',
                 '/remote-sync/process-batch', '/transfer-htaccess',
-            ] as $route) {
-                self::assertSame('__return_true', $this->route($route)['permission_callback'], $route);
+            ];
+
+            foreach ($routes as $route) {
+                $permission = $this->route($route)['permission_callback'];
+                self::assertNotSame('__return_true', $permission, $route);
+                self::assertFalse($permission($anonymous), $route);
+                self::assertFalse($permission($invalid), $route);
+                self::assertTrue($permission($valid), $route);
+                self::assertTrue($permission($query), $route);
+            }
+
+            $GLOBALS['route_provider_admin'] = true;
+            foreach ($routes as $route) {
+                self::assertTrue(($this->route($route)['permission_callback'])($invalid), $route);
             }
         }
 

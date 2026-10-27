@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace WordpressMigrator\Tests;
 
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Helpers\Config;
 use WordpressMigrator\Helpers\JsonCompressor;
@@ -261,6 +263,67 @@ final class MigrationRegistryTest extends TestCase
         $this->writeMigrationInfo(['site_url' => 'https://old.example.com']);
 
         $this->assertSame('https://old.example.com', $this->registry->getSourceUrlWithToken());
+    }
+
+    public static function unsafeMigrationIds(): array
+    {
+        return [
+            'slash' => ['../outside'],
+            'backslash' => ['..\\outside'],
+            'dotdot' => ['..'],
+            'empty' => [''],
+            'absolute' => ['/etc/passwd'],
+        ];
+    }
+
+    /**
+     * @dataProvider unsafeMigrationIds
+     */
+    #[DataProvider('unsafeMigrationIds')]
+    public function testUnsafeMigrationIdIsRejectedBeforeADirectoryIsBuilt(string $migrationId): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid migration ID');
+
+        new MigrationRegistry($migrationId);
+    }
+
+    public function testStatusIsReadOnceInsideTheLockAndFreshOutsideIt(): void
+    {
+        $this->registerTwoFilesAndOneTable();
+        $statusFile = $this->migrationDir . 'collected/mig_1/status.json';
+
+        $this->registry->withStatusLock(function () use ($statusFile) {
+            $this->registry->getStatus();
+            file_put_contents($statusFile, '{}');
+
+            $this->assertSame('mig_1', $this->registry->getStatus()['migration_id']);
+            $this->assertTrue($this->registry->markChunkRestored('file_chunk', ['file' => ['path' => 'a.txt', 'chunk_info' => ['chunk_number' => 1]]]));
+            $this->assertSame(1, (new MigrationRegistry('mig_1'))->getStatus()['files']['a.txt']['restored_chunks']);
+        });
+
+        $this->assertSame(1, $this->registry->getStatus()['files']['a.txt']['restored_chunks']);
+        file_put_contents($statusFile, JsonCompressor::compressToJson(['migration_id' => 'changed']));
+        $this->assertSame('changed', $this->registry->getStatus()['migration_id']);
+    }
+
+    public function testFileChunkOffsetsComeFromTheSmallIndex(): void
+    {
+        $this->registry->registerMigration([
+            'files' => [['path' => 'big.bin', 'total_chunks' => 2, 'chunks' => [['offset' => 0, 'size' => 10], ['offset' => 10, 'size' => 4]]]],
+        ]);
+
+        $this->assertFileExists($this->migrationDir . 'collected/mig_1/file_chunks.json');
+        $this->assertSame(['offset' => 10, 'size' => 4, 'chunk_number' => 2], $this->registry->expectedFileChunk('big.bin', 2));
+        $this->assertNull($this->registry->expectedFileChunk('big.bin', 3));
+        $this->assertNull($this->registry->expectedFileChunk('other.bin', 1));
+    }
+
+    public function testFileChunkOffsetsFallBackToTheManifestWithoutAnIndex(): void
+    {
+        $this->writeMigrationInfo(['files' => [['path' => 'big.bin', 'chunks' => [['offset' => 0, 'size' => 10], ['offset' => 10, 'size' => 4]]]]]);
+
+        $this->assertSame(['offset' => 10, 'size' => 4, 'chunk_number' => 2], $this->registry->expectedFileChunk('big.bin', 2));
     }
 
     private function registerTwoFilesAndOneTable(): bool

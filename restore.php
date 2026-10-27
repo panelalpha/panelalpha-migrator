@@ -29,9 +29,10 @@ use WordpressMigrator\RestoreWorker;
 try {
     $worker = new RestoreWorker(ABSPATH);
     $worker->run();
-} catch (Exception $e) {
+} catch (\Throwable $e) {
+    error_log('WordPress Migrator: Restore worker failed: ' . $e->getMessage());
     http_response_code(500);
     header('Content-Type: application/json');
-    echo json_encode(['error' => $e->getMessage()]);
+    echo json_encode(['error' => 'Restore worker failed. Check the PHP error log on the destination.']);
     exit;
 }

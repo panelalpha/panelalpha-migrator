@@ -6,11 +6,13 @@ namespace WordpressMigrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Helpers\Config;
 use WordpressMigrator\Helpers\JsonCompressor;
 use WordpressMigrator\Services\Backup\FileBackupService;
 use WordpressMigrator\Services\Migration\MigrationStorageService;
+use WordpressMigrator\Tests\Support\CurlOptionCapture;
 use WordpressMigrator\Tests\Support\FakeDestination;
 use WordpressMigrator\Tests\Support\ResetsGlobalState;
 use WordpressMigrator\Tests\Support\TemporaryDirectory;
@@ -29,6 +31,7 @@ final class FileBackupServiceTest extends TestCase
     protected function setUp(): void
     {
         Config::set('migration_dir', $this->createTemporaryDirectory());
+        Config::set('allowed_destinations', ['127.0.0.1']);
         $this->siteDir = $this->createTemporaryDirectory();
         Config::set('root_path', $this->siteDir);
         $this->destination = FakeDestination::get();
@@ -102,8 +105,11 @@ final class FileBackupServiceTest extends TestCase
         $this->assertSame('from-migration', $this->destination->requests()[0]['headers']['x-migrator-token']);
     }
 
+    /**
+     * @runInSeparateProcess
+     */
     #[RunInSeparateProcess]
-    public function testTokenFallsBackToConfigPhpWhenMissingFromMigrationData(): void
+    public function testSiteTokenIsNeverSentWhenTheMigrationHasNoDestinationToken(): void
     {
         $pluginDir = $this->createTemporaryDirectory();
         file_put_contents($pluginDir . 'config.php', "<?php return ['token' => 'config-token'];");
@@ -115,9 +121,14 @@ final class FileBackupServiceTest extends TestCase
             'files' => [$this->fileEntry('a.txt', 'hello', 5)],
         ]);
 
-        (new FileBackupService('mig_1'))->getNextChunk();
+        try {
+            (new FileBackupService('mig_1'))->getNextChunk();
+            $this->fail('A migration without a destination token must not be sent');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Destination token not found in migration data', $e->getMessage());
+        }
 
-        $this->assertSame('config-token', $this->destination->requests()[0]['headers']['x-migrator-token']);
+        $this->assertSame([], $this->destination->requests());
     }
 
     public function testSinglePendingChunkIsSentAndMarkedSent(): void
@@ -249,6 +260,65 @@ final class FileBackupServiceTest extends TestCase
         $this->assertSame('sent', $saved['files'][1]['chunks'][0]['status']);
     }
 
+    public function testFailedAcknowledgementLeavesTheChunkPending(): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello', 5)],
+        ]);
+        $this->destination->respondWith('restore.php', 200, json_encode([
+            'success' => true,
+            'migration_id' => 'mig_1',
+            'chunk_id' => 'file_chunk_00001',
+            'result' => ['failed' => true, 'can_retry' => true, 'reason' => 'disk full'],
+        ]));
+
+        $service = new FileBackupService('mig_1');
+
+        try {
+            $service->getNextChunk();
+            $this->fail('A failed write must not count as delivered');
+        } catch (Exception $e) {
+            $this->assertStringContainsString('disk full', $e->getMessage());
+        }
+
+        $saved = $this->storage->loadMigrationData('mig_1');
+        $this->assertSame('pending', $saved['files'][0]['status']);
+        $this->assertSame('pending', $saved['files'][0]['chunks'][0]['status']);
+        $this->assertFalse($service->getProgress()['is_complete']);
+    }
+
+    public function testExplicitSkipIsRecordedWithItsReason(): void
+    {
+        self::writeFile($this->siteDir . 'wp-config.php', '<?php');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('wp-config.php', '<?php', 5)],
+        ]);
+        $this->destination->respondWith('restore.php', 200, json_encode([
+            'success' => true,
+            'migration_id' => 'mig_1',
+            'chunk_id' => 'file_chunk_00001',
+            'result' => [
+                'skipped' => true,
+                'can_retry' => false,
+                'reason' => 'Critical file excluded from restore',
+            ],
+        ]));
+
+        (new FileBackupService('mig_1'))->getNextChunk();
+
+        $saved = $this->storage->loadMigrationData('mig_1');
+        $this->assertSame('skipped', $saved['files'][0]['status']);
+        $this->assertSame('skipped', $saved['files'][0]['chunks'][0]['status']);
+        $this->assertSame('Critical file excluded from restore', $saved['files'][0]['chunks'][0]['skip_reason']);
+    }
+
     public function testHttpErrorThrowsAndLeavesTheChunkPending(): void
     {
         self::writeFile($this->siteDir . 'a.txt', 'hello');
@@ -318,6 +388,83 @@ final class FileBackupServiceTest extends TestCase
         $this->assertSame('custom/override.txt', $progress['current_file']);
     }
 
+    public function testMigrationWithoutPinnedIpGetsOneOnTheFirstChunkAndIsNotCheckedAgain(): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello world');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello world', 5)],
+        ]);
+        $service = new FileBackupService('mig_1');
+
+        $service->getNextChunk();
+
+        $this->assertSame('127.0.0.1', $this->storage->loadMigrationData('mig_1')['pinned_ip']);
+
+        // 127.0.0.1 would now be refused, so the next chunk proves the guard does not run again.
+        Config::set('allowed_destinations', []);
+        $service->getNextChunk();
+
+        $this->assertCount(2, $this->destination->requests());
+    }
+
+    public function testStoredPinnedIpSkipsTheGuardAndIsUsedForTheConnection(): void
+    {
+        Config::set('allowed_destinations', []);
+        self::writeFile($this->siteDir . 'a.txt', 'hello world');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => 'http://destination.invalid:' . $this->destination->port(),
+            'pinned_ip' => '127.0.0.1',
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello world', 11)],
+        ]);
+        CurlOptionCapture::reset();
+
+        (new FileBackupService('mig_1'))->getNextChunk();
+
+        $this->assertSame(
+            ['destination.invalid:' . $this->destination->port() . ':127.0.0.1'],
+            CurlOptionCapture::get(CURLOPT_RESOLVE)
+        );
+        $this->assertCount(1, $this->destination->requests());
+    }
+
+    public static function tlsScenarios(): array
+    {
+        return [
+            'manual ip and insecure_tls' => [['ip' => '127.0.0.1', 'insecure_tls' => true], false],
+            'insecure_tls without a manual ip' => [['insecure_tls' => true], true],
+            'manual ip, insecure_tls off' => [['ip' => '127.0.0.1', 'insecure_tls' => false], true],
+            'manual ip, insecure_tls as the string false' => [['ip' => '127.0.0.1', 'insecure_tls' => 'false'], true],
+            'manual ip, insecure_tls missing' => [['ip' => '127.0.0.1'], true],
+            'default' => [[], true],
+        ];
+    }
+
+    /**
+     * @dataProvider tlsScenarios
+     */
+    #[DataProvider('tlsScenarios')]
+    public function testChunkSkipsCertificateChecksOnlyForAManualIpWithInsecureTls(array $tlsData, bool $strict): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello world');
+        $this->storage->saveMigrationData('mig_1', array_merge([
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello world', 11)],
+        ], $tlsData));
+        CurlOptionCapture::reset();
+
+        (new FileBackupService('mig_1'))->getNextChunk();
+
+        $this->assertSame($strict, CurlOptionCapture::peerVerificationEnabled());
+        $this->assertSame($strict, CurlOptionCapture::hostVerificationEnabled());
+    }
+
     private function fileEntry(string $path, string $content, int $chunkSize, string $status = 'pending'): array
     {
         $size = strlen($content);
@@ -345,5 +492,62 @@ final class FileBackupServiceTest extends TestCase
             'totalChunks' => count($chunks),
             'status' => $status,
         ];
+    }
+
+    public function testABatchSavesTheMigrationFileOnceAndKeepsEverySentChunk(): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello');
+        self::writeFile($this->siteDir . 'b.txt', 'world');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello', 5), $this->fileEntry('b.txt', 'world', 5)],
+        ]);
+        $storage = new class extends MigrationStorageService {
+            public int $saves = 0;
+
+            public function saveMigrationData(string $migrationId, array $migrationDataArray): void
+            {
+                $this->saves++;
+                parent::saveMigrationData($migrationId, $migrationDataArray);
+            }
+        };
+        $backup = new FileBackupService('mig_1', $storage);
+
+        $sent = $backup->inBatch(function () use ($backup): int {
+            $count = 0;
+            while ($backup->getNextChunk() !== null) {
+                $count++;
+            }
+            return $count;
+        });
+
+        $this->assertSame(2, $sent);
+        $this->assertSame(1, $storage->saves);
+        $files = $this->storage->loadMigrationData('mig_1')['files'];
+        $this->assertSame(['sent', 'sent'], array_column($files, 'status'));
+    }
+
+    public function testAFailedBatchStillSavesTheChunksSentBeforeTheFailure(): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'files' => [$this->fileEntry('a.txt', 'hello', 5)],
+        ]);
+        $backup = new FileBackupService('mig_1');
+
+        try {
+            $backup->inBatch(function () use ($backup): void {
+                $backup->getNextChunk();
+                throw new \RuntimeException('stop');
+            });
+        } catch (\RuntimeException $e) {
+        }
+
+        $this->assertSame('sent', $this->storage->loadMigrationData('mig_1')['files'][0]['status']);
     }
 }

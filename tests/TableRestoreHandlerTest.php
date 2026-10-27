@@ -24,7 +24,9 @@ final class TableRestoreHandlerTest extends TestCase
 
     private RecordingPdo $pdo;
 
-    private MigrationRegistry&MockObject $registry;
+    /** @var MigrationRegistry&MockObject */
+
+    private MockObject $registry;
 
     private TableRestoreHandler $handler;
 
@@ -116,7 +118,7 @@ final class TableRestoreHandlerTest extends TestCase
         $result = $this->handler->restoreData($this->dataChunk('old_posts', ['ID', 'post_title'], [[1, 'Hello']], 'old_'));
 
         $this->assertSame('posts', $result['table']);
-        $this->assertSame([[1, 'Hello']], $this->pdo->query('SELECT * FROM posts')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertEquals([[1, 'Hello']], $this->pdo->query('SELECT * FROM posts')->fetchAll(\PDO::FETCH_NUM));
     }
 
     public function testDatabaseErrorNamesTheTable(): void
@@ -141,7 +143,7 @@ final class TableRestoreHandlerTest extends TestCase
         ]));
 
         $this->assertSame(['action' => 'restored_table_data', 'table' => 'wp_options', 'chunk' => 1], $result);
-        $this->assertSame(
+        $this->assertEquals(
             [[1, 'siteurl', 'https://new.example.com'], [2, 'blogname', 'My site']],
             $this->pdo->query('SELECT * FROM wp_options ORDER BY option_id')->fetchAll(\PDO::FETCH_NUM)
         );
@@ -159,7 +161,7 @@ final class TableRestoreHandlerTest extends TestCase
         $result = $this->handler->restoreData($this->dataChunk('old_posts', ['ID', 'post_title'], [[1, 'Hello']], 'old_'));
 
         $this->assertSame('new_posts', $result['table']);
-        $this->assertSame([[1, 'Hello']], $this->pdo->query('SELECT * FROM new_posts')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertEquals([[1, 'Hello']], $this->pdo->query('SELECT * FROM new_posts')->fetchAll(\PDO::FETCH_NUM));
     }
 
     public function testBinaryValuesAreDecodedBeforeTheInsert(): void
@@ -208,6 +210,22 @@ final class TableRestoreHandlerTest extends TestCase
 
         $this->assertSame('restored_table_data', $this->handler->restoreData($chunk)['action']);
         $this->assertSame($precision, ini_get('serialize_precision'));
+    }
+
+    public function testAChunkThatFailsHalfwayLeavesNoRows(): void
+    {
+        $this->pdo->sqlite('CREATE TABLE wp_options (option_id INTEGER PRIMARY KEY, option_name TEXT NOT NULL)');
+        $this->registry->expects($this->never())->method('markChunkRestored');
+
+        try {
+            $this->handler->restoreData($this->dataChunk('wp_options', ['option_id', 'option_name'], [[1, 'siteurl'], [2, null]]));
+            $this->fail('A row that cannot be inserted must fail the chunk');
+        } catch (Exception $e) {
+            $this->assertStringContainsString('Failed to restore table data for wp_options', $e->getMessage());
+        }
+
+        $this->assertSame([], $this->pdo->query('SELECT * FROM wp_options')->fetchAll(\PDO::FETCH_NUM));
+        $this->assertFalse($this->pdo->inTransaction());
     }
 
     public function testInsertErrorNamesTheTable(): void

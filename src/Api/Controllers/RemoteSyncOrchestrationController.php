@@ -4,6 +4,8 @@ namespace WordpressMigrator\Api\Controllers;
 
 use WordpressMigrator\Api\Middleware\RequestValidator;
 use WordpressMigrator\Api\Middleware\ResponseFormatter;
+use WordpressMigrator\Helpers\DestinationNotAllowedException;
+use WordpressMigrator\Helpers\PathProvider;
 use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
 
 /**
@@ -24,8 +26,8 @@ class RemoteSyncOrchestrationController
      */
     public function __construct(
         RemoteSyncOrchestrationService $orchestrationService,
-        RequestValidator $requestValidator = null,
-        ResponseFormatter $responseFormatter = null
+        ?RequestValidator $requestValidator = null,
+        ?ResponseFormatter $responseFormatter = null
     ) {
         $this->orchestrationService = $orchestrationService;
         $this->requestValidator = $requestValidator ?? new RequestValidator();
@@ -57,6 +59,7 @@ class RemoteSyncOrchestrationController
                 'backup_files' => $params['backup_files'] ?? true,
                 'exclusions' => $params['exclusions'] ?? null,
                 'ip' => $params['ip'] ?? null,
+                'insecure_tls' => $params['insecure_tls'] ?? false,
                 'force' => $params['force'] ?? false,
                 'base64' => $params['base64'] ?? false
             ];
@@ -68,6 +71,18 @@ class RemoteSyncOrchestrationController
                 $result
             ));
 
+        } catch (DestinationNotAllowedException $e) {
+            return $this->responseFormatter->error(
+                'destination_not_allowed',
+                $e->getMessage(),
+                ['status' => 400]
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->responseFormatter->error(
+                'sync_failed',
+                $e->getMessage(),
+                ['status' => 400]
+            );
         } catch (\Throwable $e) {
             return $this->responseFormatter->error(
                 'sync_failed',
@@ -92,6 +107,14 @@ class RemoteSyncOrchestrationController
                 return $this->responseFormatter->error(
                     'missing_migration_id',
                     'migration_id parameter is required',
+                    ['status' => 400]
+                );
+            }
+
+            if (!is_string($migrationId) || !PathProvider::isSafeMigrationId($migrationId)) {
+                return $this->responseFormatter->error(
+                    'invalid_migration_id',
+                    'Invalid migration ID',
                     ['status' => 400]
                 );
             }
@@ -134,6 +157,15 @@ class RemoteSyncOrchestrationController
             }
 
             $migrationId = $params['migration_id'];
+
+            if (!is_string($migrationId) || !PathProvider::isSafeMigrationId($migrationId)) {
+                return $this->responseFormatter->error(
+                    'invalid_migration_id',
+                    'Invalid migration ID',
+                    ['status' => 400]
+                );
+            }
+
             $batchSize = $params['batch_size'] ?? 50;
 
             $result = $this->orchestrationService->processBatch($migrationId, $batchSize);
@@ -143,11 +175,23 @@ class RemoteSyncOrchestrationController
                 $result
             ));
 
+        } catch (DestinationNotAllowedException $e) {
+            return $this->responseFormatter->error(
+                'destination_not_allowed',
+                $e->getMessage(),
+                ['status' => 400]
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->responseFormatter->error(
+                'batch_failed',
+                $e->getMessage(),
+                ['status' => 400]
+            );
         } catch (\Throwable $e) {
             return $this->responseFormatter->error(
                 'batch_failed',
                 $e->getMessage(),
-                ['status' => 500]
+                ['status' => $e->getMessage() === 'Migration not found' ? 404 : 500]
             );
         }
     }

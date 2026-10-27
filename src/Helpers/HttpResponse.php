@@ -13,7 +13,8 @@ namespace WordpressMigrator\Helpers;
  */
 class HttpResponse
 {
-    private string|false $body;
+    /** @var string|false */
+    private $body;
     private int $statusCode;
 
     /**
@@ -22,7 +23,7 @@ class HttpResponse
      * @param string|false $body
      * @param int          $statusCode
      */
-    public function __construct(string|false $body, int $statusCode)
+    public function __construct($body, int $statusCode)
     {
         $this->body = $body;
         $this->statusCode = $statusCode;
@@ -33,7 +34,7 @@ class HttpResponse
      *
      * @return string|false
      */
-    public function getBody(): string|false
+    public function getBody()
     {
         return $this->body;
     }

@@ -3,3 +3,4 @@
 /vendor/
 .phpunit.cache
 CHANGELOG.md
+/docs/internal/

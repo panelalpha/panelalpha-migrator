@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace WordpressMigrator\Tests;
 
 use Exception;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Dto\IndexInfo;
 use WordpressMigrator\Dto\TableChunk;
@@ -16,6 +17,7 @@ use WordpressMigrator\Services\Backup\DatabaseBackupService;
 use WordpressMigrator\Services\Migration\MigrationRegistry;
 use WordpressMigrator\Services\Migration\MigrationStorageService;
 use WordpressMigrator\Services\Scanner\DatabaseScanner;
+use WordpressMigrator\Tests\Support\CurlOptionCapture;
 use WordpressMigrator\Tests\Support\FakeDatabase;
 use WordpressMigrator\Tests\Support\FakeDestination;
 use WordpressMigrator\Tests\Support\RecordingPdo;
@@ -33,6 +35,7 @@ final class DatabaseBackupServiceTest extends TestCase
     protected function setUp(): void
     {
         Config::set('migration_dir', $this->createTemporaryDirectory());
+        Config::set('allowed_destinations', ['127.0.0.1']);
         $this->storage = new MigrationStorageService();
         $this->destination = FakeDestination::get();
     }
@@ -57,7 +60,7 @@ final class DatabaseBackupServiceTest extends TestCase
 
         $data = $service->getNextChunk();
         $this->assertSame('table_data', $data['type']);
-        $this->assertSame('table_chunk_00001', $data['chunk_id']);
+        $this->assertSame('mig_1_old_posts_00001', $data['chunk_id']);
         $this->assertSame('old_', $data['source_table_prefix']);
         $this->assertSame([['chunk_number' => 1, 'total_chunks' => 1, 'offset' => 0, 'limit' => 100, 'actual_rows' => 1]], [$data['table']['chunk_info']]);
         $this->assertSame('https://127.0.0.1:' . $this->destination->port() . '/page', $data['data'][0][1]);
@@ -80,7 +83,7 @@ final class DatabaseBackupServiceTest extends TestCase
         $this->assertContains('DROP TABLE IF EXISTS `new_posts`', $pdo->statements);
         $pdo->sqlite('CREATE TABLE new_posts (id INTEGER PRIMARY KEY, url TEXT, bytes BLOB)');
         $this->assertSame('new_posts', $handler->restoreData($data)['table']);
-        $this->assertSame([1, $data['data'][0][1], $binary], $pdo->query('SELECT id, url, bytes FROM new_posts')->fetch(\PDO::FETCH_NUM));
+        $this->assertEquals([1, $data['data'][0][1], $binary], $pdo->query('SELECT id, url, bytes FROM new_posts')->fetch(\PDO::FETCH_NUM));
     }
 
     public function testHttpFailureLeavesStructureUnsentAndAllowsRetry(): void
@@ -136,9 +139,69 @@ final class DatabaseBackupServiceTest extends TestCase
         $this->assertTrue($progress['is_complete']);
     }
 
-    private function saveMigration(): void
+    public function testMigrationWithoutPinnedIpGetsOneOnTheFirstChunkAndIsNotCheckedAgain(): void
     {
-        $this->storage->saveMigrationData('mig_1', [
+        $this->saveMigration();
+        $service = new DatabaseBackupService('mig_1', $this->scanner([[1, 'text', null]]), $this->storage);
+
+        $service->getNextChunk();
+
+        $this->assertSame('127.0.0.1', $this->storage->loadMigrationData('mig_1')['pinned_ip']);
+
+        // 127.0.0.1 would now be refused, so the second chunk proves the guard does not run again.
+        Config::set('allowed_destinations', []);
+        $service->getNextChunk();
+
+        $this->assertCount(2, $this->destination->requests());
+    }
+
+    public function testStoredPinnedIpSkipsTheGuardAndIsUsedForTheConnection(): void
+    {
+        Config::set('allowed_destinations', []);
+        $this->saveMigration(['pinned_ip' => '127.0.0.1', 'destinationUrl' => 'http://destination.invalid:' . $this->destination->port()]);
+        $service = new DatabaseBackupService('mig_1', $this->scanner([[1, 'text', null]]), $this->storage);
+        CurlOptionCapture::reset();
+
+        $service->getNextChunk();
+
+        $this->assertSame(
+            ['destination.invalid:' . $this->destination->port() . ':127.0.0.1'],
+            CurlOptionCapture::get(CURLOPT_RESOLVE)
+        );
+        $this->assertCount(1, $this->destination->requests());
+    }
+
+    public static function tlsScenarios(): array
+    {
+        return [
+            'manual ip and insecure_tls' => [['ip' => '127.0.0.1', 'insecure_tls' => true], false],
+            'insecure_tls without a manual ip' => [['insecure_tls' => true], true],
+            'manual ip, insecure_tls off' => [['ip' => '127.0.0.1', 'insecure_tls' => false], true],
+            'manual ip, insecure_tls as the string false' => [['ip' => '127.0.0.1', 'insecure_tls' => 'false'], true],
+            'manual ip, insecure_tls missing' => [['ip' => '127.0.0.1'], true],
+            'default' => [[], true],
+        ];
+    }
+
+    /**
+     * @dataProvider tlsScenarios
+     */
+    #[DataProvider('tlsScenarios')]
+    public function testChunkSkipsCertificateChecksOnlyForAManualIpWithInsecureTls(array $tlsData, bool $strict): void
+    {
+        $this->saveMigration($tlsData);
+        $service = new DatabaseBackupService('mig_1', $this->scanner([[1, 'text', null]]), $this->storage);
+        CurlOptionCapture::reset();
+
+        $service->getNextChunk();
+
+        $this->assertSame($strict, CurlOptionCapture::peerVerificationEnabled());
+        $this->assertSame($strict, CurlOptionCapture::hostVerificationEnabled());
+    }
+
+    private function saveMigration(array $overrides = []): void
+    {
+        $this->storage->saveMigrationData('mig_1', $overrides + [
             'migrationId' => 'mig_1',
             'siteUrl' => 'https://old.example.test',
             'destinationUrl' => $this->destination->url(),

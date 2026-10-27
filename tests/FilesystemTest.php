@@ -64,4 +64,21 @@ final class FilesystemTest extends TestCase
 
         Filesystem::ensureDirectoryExists($file . '/child');
     }
+
+    public function testAtomicWriteFallsBackToWritingInPlace(): void
+    {
+        $directory = $this->createTemporaryDirectory();
+        $path = $directory . 'config.php';
+        file_put_contents($path, 'old');
+        chmod($path, 0666);
+        chmod($directory, 0555);
+
+        try {
+            $this->assertTrue(Filesystem::writeFileAtomic($path, 'new'));
+            $this->assertSame('new', file_get_contents($path));
+            $this->assertSame([$path], glob($directory . '*'));
+        } finally {
+            chmod($directory, 0755);
+        }
+    }
 }

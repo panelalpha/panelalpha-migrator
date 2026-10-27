@@ -19,7 +19,7 @@ class Response
      * @param mixed $data
      * @param int   $statusCode
      */
-    public static function json(mixed $data, int $statusCode = 200): void
+    public static function json($data, int $statusCode = 200): void
     {
         http_response_code($statusCode);
         header('Content-Type: application/json');
@@ -50,7 +50,7 @@ class Response
      *
      * @param mixed $data
      */
-    public static function success(mixed $data): void
+    public static function success($data): void
     {
         self::json($data, 200);
     }

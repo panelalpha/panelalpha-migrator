@@ -9,19 +9,22 @@ namespace WordpressMigrator\Helpers;
  */
 class MigrationLock
 {
+    private const GUARD = "<?php exit; ?>\n";
+
     private string $lockFile;
+    private ?string $legacyLockFile = null;
     private int $timeout;
 
     /**
      * @param string $lockFile Path to lock file
-     * @param int $timeout Lock timeout in seconds (default: 2 hours)
+     * @param int $timeout Lock timeout in seconds (default: 15 minutes)
      */
-    public function __construct(string $lockFile = null, int $timeout = 7200)
+    public function __construct(?string $lockFile = null, int $timeout = 900)
     {
         if ($lockFile === null) {
-            $lockFile = defined('WP_CONTENT_DIR')
-                ? WP_CONTENT_DIR . '/wp-migrator-lock.json'
-                : sys_get_temp_dir() . '/wp-migrator-lock.json';
+            $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : sys_get_temp_dir();
+            $lockFile = $base . '/wp-migrator-lock.php';
+            $this->legacyLockFile = $base . '/wp-migrator-lock.json';
         }
 
         $this->lockFile = $lockFile;
@@ -35,7 +38,9 @@ class MigrationLock
      */
     public function isLocked(): bool
     {
-        if (!file_exists($this->lockFile)) {
+        $this->adoptLegacyLock();
+
+        if (!file_exists($this->activeFile())) {
             return false;
         }
 
@@ -63,7 +68,28 @@ class MigrationLock
      */
     public function acquire(string $migrationId, array $additionalData = []): bool
     {
+        $this->adoptLegacyLock();
+
         if ($this->isLocked()) {
+            return false;
+        }
+
+        $dir = dirname($this->lockFile);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+            return false;
+        }
+
+        // Exclusive create: the second process loses even if both passed isLocked.
+        $lockFile = $this->lockFile;
+        $handle = @fopen($lockFile, 'x');
+
+        // Hosts such as WP Engine refuse new .php files; then the lock is the JSON file older versions used.
+        if ($handle === false && !file_exists($lockFile) && $this->legacyLockFile !== null) {
+            $lockFile = $this->legacyLockFile;
+            $handle = @fopen($lockFile, 'x');
+        }
+
+        if ($handle === false) {
             return false;
         }
 
@@ -74,21 +100,86 @@ class MigrationLock
             'pid' => function_exists('posix_getpid') ? posix_getpid() : getmypid(),
         ], $additionalData);
 
-        return $this->writeLock($lockData);
+        $json = json_encode($lockData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $written = $json !== false && fwrite($handle, self::GUARD . $json) !== false;
+        fclose($handle);
+
+        if (!$written) {
+            @unlink($lockFile);
+            return false;
+        }
+
+        return true;
     }
 
     /**
      * Release the lock.
      *
+     * @param string|null $migrationId When set, the lock is released only if this migration holds it
      * @return bool True if lock was released
      */
-    public function release(): bool
+    public function release(?string $migrationId = null): bool
     {
-        if (!file_exists($this->lockFile)) {
+        $this->adoptLegacyLock();
+
+        if (!file_exists($this->activeFile())) {
             return true;
         }
 
-        return @unlink($this->lockFile);
+        if ($migrationId !== null && !$this->isStale()) {
+            $lock = $this->readLock();
+            if (($lock['migration_id'] ?? null) !== $migrationId) {
+                return false;
+            }
+        }
+
+        return @unlink($this->activeFile());
+    }
+
+    /**
+     * Runs one mutation while this migration owns the lock.
+     * A second caller gets a conflict instead of mutating at the same time.
+     *
+     * @param string   $migrationId
+     * @param callable $callback
+     * @return mixed
+     */
+    public function exclusive(string $migrationId, callable $callback)
+    {
+        $this->adoptLegacyLock();
+
+        if (!is_file($this->activeFile())) {
+            throw new \RuntimeException('Migration lock is not held');
+        }
+
+        $handle = @fopen($this->activeFile(), 'r+');
+        if ($handle === false || !flock($handle, LOCK_EX | LOCK_NB)) {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            throw new \RuntimeException('Migration lock is busy');
+        }
+
+        try {
+            $lock = $this->readLock();
+            if (($lock['migration_id'] ?? null) !== $migrationId) {
+                throw new \RuntimeException('Migration lock is held by another migration');
+            }
+
+            $lock['timestamp'] = time();
+            $encoded = json_encode($lock, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            if ($encoded !== false) {
+                rewind($handle);
+                ftruncate($handle, 0);
+                fwrite($handle, self::GUARD . $encoded);
+                fflush($handle);
+            }
+
+            return $callback();
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     /**
@@ -98,7 +189,9 @@ class MigrationLock
      */
     public function getLockInfo(): ?array
     {
-        if (!file_exists($this->lockFile)) {
+        $this->adoptLegacyLock();
+
+        if (!file_exists($this->activeFile())) {
             return null;
         }
 
@@ -113,6 +206,8 @@ class MigrationLock
      */
     public function update(array $data): bool
     {
+        $this->adoptLegacyLock();
+
         $lock = $this->readLock();
 
         if (!$lock) {
@@ -120,7 +215,8 @@ class MigrationLock
         }
 
         $updatedLock = array_merge($lock, $data, [
-            'updated_at' => date('Y-m-d H:i:s')
+            'updated_at' => date('Y-m-d H:i:s'),
+            'timestamp' => time(),
         ]);
 
         return $this->writeLock($updatedLock);
@@ -133,14 +229,18 @@ class MigrationLock
      */
     private function readLock(): ?array
     {
-        if (!file_exists($this->lockFile)) {
+        if (!file_exists($this->activeFile())) {
             return null;
         }
 
-        $content = @file_get_contents($this->lockFile);
+        $content = @file_get_contents($this->activeFile());
 
         if ($content === false) {
             return null;
+        }
+
+        if (strncmp($content, self::GUARD, strlen(self::GUARD)) === 0) {
+            $content = substr($content, strlen(self::GUARD));
         }
 
         $data = json_decode($content, true);
@@ -153,6 +253,44 @@ class MigrationLock
     }
 
     /**
+     * The guarded .php lock, or the JSON lock when only that one exists:
+     * written by an older version, or on a host that refuses new .php files.
+     */
+    private function activeFile(): string
+    {
+        if ($this->legacyLockFile !== null && !file_exists($this->lockFile) && file_exists($this->legacyLockFile)) {
+            return $this->legacyLockFile;
+        }
+
+        return $this->lockFile;
+    }
+
+    /**
+     * Moves a lock written by an older version (public JSON file) to the guarded file,
+     * so an upgrade during a migration does not allow a parallel start.
+     * When the host refuses the .php file, the JSON lock stays in use.
+     */
+    private function adoptLegacyLock(): void
+    {
+        if ($this->legacyLockFile === null || !file_exists($this->legacyLockFile)) {
+            return;
+        }
+
+        if (!file_exists($this->lockFile)) {
+            $content = @file_get_contents($this->legacyLockFile);
+            $handle = is_string($content) ? @fopen($this->lockFile, 'x') : false;
+            if ($handle !== false) {
+                fwrite($handle, self::GUARD . $content);
+                fclose($handle);
+            }
+        }
+
+        if (file_exists($this->lockFile)) {
+            @unlink($this->legacyLockFile);
+        }
+    }
+
+    /**
      * Write lock file.
      *
      * @param array $data Lock data to write
@@ -160,7 +298,7 @@ class MigrationLock
      */
     private function writeLock(array $data): bool
     {
-        $dir = dirname($this->lockFile);
+        $dir = dirname($this->activeFile());
         if (!is_dir($dir)) {
             if (!@mkdir($dir, 0755, true)) {
                 return false;
@@ -173,7 +311,7 @@ class MigrationLock
             return false;
         }
 
-        $result = @file_put_contents($this->lockFile, $json, LOCK_EX);
+        $result = @file_put_contents($this->activeFile(), self::GUARD . $json, LOCK_EX);
 
         return $result !== false;
     }
@@ -195,7 +333,9 @@ class MigrationLock
      */
     public function isStale(): bool
     {
-        if (!file_exists($this->lockFile)) {
+        $this->adoptLegacyLock();
+
+        if (!file_exists($this->activeFile())) {
             return false;
         }
 

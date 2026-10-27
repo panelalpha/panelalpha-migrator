@@ -34,8 +34,15 @@ class ExclusionParser
             }
 
             // Detect type and categorize
-            if (self::isExtension($line)) {
+            if (self::hasPathSeparator($line)) {
+                $directories[] = self::normalizeDirectory($line);
+            } elseif (self::isExtension($line)) {
                 $extensions[] = self::normalizeExtension($line);
+
+                // A name such as .git or .ddev is also a hidden folder or file.
+                if (str_starts_with($line, '.')) {
+                    $directories[] = $line;
+                }
             } elseif (self::isDirectory($line)) {
                 $directories[] = self::normalizeDirectory($line);
             } else {
@@ -64,25 +71,25 @@ class ExclusionParser
     }
 
     /**
-     * Check if line represents a directory.
-     * Contains / or \ or is a name without extension.
+     * Check if line is a path, such as wp-content/cache or /.ddev.
+     *
+     * @param string $line
+     * @return bool
+     */
+    private static function hasPathSeparator(string $line): bool
+    {
+        return str_contains($line, '/') || str_contains($line, '\\');
+    }
+
+    /**
+     * Check if line represents a directory: a name without extension.
      *
      * @param string $line
      * @return bool
      */
     private static function isDirectory(string $line): bool
     {
-        // Contains path separator
-        if (str_contains($line, '/') || str_contains($line, '\\')) {
-            return true;
-        }
-
-        // Name without extension (no dot)
-        if (!str_contains($line, '.')) {
-            return true;
-        }
-
-        return false;
+        return !str_contains($line, '.');
     }
 
     /**
@@ -103,13 +110,13 @@ class ExclusionParser
     }
 
     /**
-     * Normalize directory path (remove trailing slashes).
+     * Normalize directory path (remove leading and trailing slashes).
      *
      * @param string $directory
      * @return string
      */
     private static function normalizeDirectory(string $directory): string
     {
-        return rtrim(str_replace('\\', '/', $directory), '/');
+        return trim(str_replace('\\', '/', $directory), '/');
     }
 }

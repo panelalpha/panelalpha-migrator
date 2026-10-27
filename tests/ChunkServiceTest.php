@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WordpressMigrator\Tests;
 
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use WordpressMigrator\Helpers\Config;
@@ -52,6 +53,9 @@ final class ChunkServiceTest extends TestCase
         ];
     }
 
+    /**
+     * @dataProvider chunkFileNames
+     */
     #[DataProvider('chunkFileNames')]
     public function testChunkIsSavedCompressedUnderItsFileName(array $chunk, string $expectedName): void
     {
@@ -61,6 +65,72 @@ final class ChunkServiceTest extends TestCase
         $path = $this->migrationDir . 'collected/mig_1/' . $name;
         $this->assertFileExists($path);
         $this->assertSame($chunk, JsonCompressor::decompressFromJson(file_get_contents($path)));
+    }
+
+    public static function unsafeChunks(): array
+    {
+        return [
+            'file chunk' => [['type' => 'file_chunk', 'chunk_id' => '../other_mig/status']],
+            'table data' => [['type' => 'table_data', 'chunk_id' => '../other_mig/status']],
+            'other type' => [['type' => 'custom', 'chunk_id' => '../x']],
+            'type itself' => [['type' => '../x', 'chunk_id' => 'a']],
+        ];
+    }
+
+    /**
+     * @dataProvider unsafeChunks
+     */
+    #[DataProvider('unsafeChunks')]
+    public function testUnsafeChunkIdIsRejectedBeforeAnythingIsWritten(array $chunk): void
+    {
+        try {
+            $this->service->saveChunk('mig_1', $chunk);
+            $this->fail('Expected the chunk id to be rejected.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertSame('Invalid chunk ID', $e->getMessage());
+        }
+
+        $this->assertFileDoesNotExist($this->migrationDir . 'collected/other_mig/status.json');
+    }
+
+    public function testTwoTablesKeepTheirOwnChunkOne(): void
+    {
+        $posts = $this->tableChunk('wp_posts', 1, [[1, 'Hello']]);
+        $users = $this->tableChunk('wp_users', 1, [[7, 'Ada']]);
+
+        $postsFile = $this->service->saveChunk('mig_1', $posts);
+        $usersFile = $this->service->saveChunk('mig_1', $users);
+
+        $this->assertNotSame($postsFile, $usersFile);
+        $directory = $this->migrationDir . 'collected/mig_1/';
+        $this->assertSame($posts, JsonCompressor::decompressFromJson(file_get_contents($directory . $postsFile)));
+        $this->assertSame($users, JsonCompressor::decompressFromJson(file_get_contents($directory . $usersFile)));
+    }
+
+    public function testTableNameCannotEscapeTheMigrationDirectory(): void
+    {
+        $chunk = $this->tableChunk('../wp_users', 1, [[1]]);
+
+        $name = $this->service->saveChunk('mig_1', $chunk);
+
+        $this->assertStringContainsString('wp_users', $name);
+        $this->assertDoesNotMatchRegularExpression('/[\/\\\\]|\.\./', $name);
+        $this->assertFileExists($this->migrationDir . 'collected/mig_1/' . $name);
+        $this->assertFileDoesNotExist(dirname($this->migrationDir) . '/wp_users_00001.json');
+    }
+
+    public function testAnOldChunkFileIsLeftInPlaceWhenANewChunkIsSaved(): void
+    {
+        $directory = $this->migrationDir . 'collected/mig_1/';
+        mkdir($directory, 0755, true);
+        $old = $directory . 'table_chunk_00001.json';
+        file_put_contents($old, JsonCompressor::compressToJson($this->tableChunk('wp_posts', 1, [[1, 'kept']])));
+
+        $newFile = $this->service->saveChunk('mig_1', $this->tableChunk('wp_comments', 1, [[2, 'new']]));
+
+        $this->assertFileExists($old);
+        $this->assertNotSame('table_chunk_00001.json', $newFile);
+        $this->assertFileExists($directory . $newFile);
     }
 
     public function testInfoChunkRegistersTheMigration(): void
@@ -87,5 +157,47 @@ final class ChunkServiceTest extends TestCase
         $status = (new MigrationRegistry('mig_1'))->getStatus();
         $this->assertSame(1, $status['chunks_received']);
         $this->assertSame('received', $status['files']['a.txt']['status']);
+    }
+
+    public static function unsafeMigrationIds(): array
+    {
+        return [
+            'slash' => ['../outside'],
+            'backslash' => ['..\\outside'],
+            'dotdot' => ['..'],
+            'empty' => [''],
+            'absolute' => ['/etc/passwd'],
+        ];
+    }
+
+    /**
+     * @dataProvider unsafeMigrationIds
+     */
+    #[DataProvider('unsafeMigrationIds')]
+    public function testUnsafeMigrationIdIsRejectedAndNotUsedAsADirectory(string $migrationId): void
+    {
+        try {
+            $this->service->saveChunk($migrationId, ['type' => 'info']);
+            $this->fail('An unsafe migration id must be rejected');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertSame('Invalid migration ID', $exception->getMessage());
+        }
+
+        $this->assertDirectoryDoesNotExist($this->migrationDir . 'outside');
+    }
+
+    private function tableChunk(string $table, int $number, array $rows): array
+    {
+        return [
+            'type' => 'table_data',
+            'migration_id' => 'mig_1',
+            'chunk_id' => 'table_chunk_' . str_pad((string) $number, 5, '0', STR_PAD_LEFT),
+            'table' => [
+                'name' => $table,
+                'chunk_info' => ['chunk_number' => $number, 'total_chunks' => 1],
+            ],
+            'columns' => ['ID', 'title'],
+            'data' => $rows,
+        ];
     }
 }

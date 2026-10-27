@@ -84,6 +84,21 @@ final class ChunkDomainReplacerTest extends TestCase
         ]], $result);
     }
 
+    public function testSerializedObjectIsNotInstantiated(): void
+    {
+        DomainReplacerProbe::$woke = 0;
+        $input = serialize(new DomainReplacerProbe());
+
+        $result = $this->replacer->replaceInData([[
+            'opt' => $input,
+        ]]);
+
+        $this->assertSame(0, DomainReplacerProbe::$woke);
+        $this->assertSame([[
+            'opt' => $input,
+        ]], $result);
+    }
+
     public function testSerializedValueWithUnloadedClassIsLeftUntouched(): void
     {
         $input = 'O:27:"ActionScheduler_SimpleSchedule":0:{}';
@@ -119,5 +134,17 @@ final class ChunkDomainReplacerTest extends TestCase
         $this->assertSame([[
             'v' => null,
         ]], $result);
+    }
+}
+
+final class DomainReplacerProbe
+{
+    public static int $woke = 0;
+
+    public string $url = 'https://old.example.com/page';
+
+    public function __wakeup(): void
+    {
+        self::$woke++;
     }
 }

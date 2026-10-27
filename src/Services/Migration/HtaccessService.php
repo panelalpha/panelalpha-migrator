@@ -3,10 +3,12 @@
 namespace WordpressMigrator\Services\Migration;
 
 use Exception;
+use WordpressMigrator\Helpers\DestinationGuard;
 use WordpressMigrator\Helpers\Filesystem;
 use WordpressMigrator\Helpers\Http;
 use WordpressMigrator\Helpers\JsonCompressor;
 use WordpressMigrator\Helpers\PathProvider;
+use WordpressMigrator\Helpers\TokenHelper;
 
 /**
  * Class HtaccessService
@@ -30,7 +32,10 @@ class HtaccessService
     public function transfer(string $migrationId): array
     {
         $migrationFilePath = PathProvider::getMigrationFilePath($migrationId);
-        $migrationData = JsonCompressor::decompressFromJson(file_get_contents($migrationFilePath));
+        $migrationData = array_merge(
+            JsonCompressor::decompressFromJson(file_get_contents($migrationFilePath)),
+            (new MigrationStorageService())->loadSecrets($migrationId)
+        );
 
         $destinationUrl = $migrationData['destinationUrl']
             ?? $migrationData['destination_url']
@@ -41,7 +46,7 @@ class HtaccessService
             throw new Exception('Destination URL not found in migration data');
         }
 
-        $token = $migrationData['token'] ?? null;
+        $token = TokenHelper::forMigration($migrationData);
         $ip    = $migrationData['ip']    ?? null;
 
         $htaccessPath = PathProvider::getAbsPath() . '.htaccess';
@@ -69,12 +74,18 @@ class HtaccessService
             'headers'   => $headers,
             'body'      => json_encode(['content' => $content, 'migration_id' => $migrationId]),
             'timeout'   => 30,
-            'sslverify' => false,
         ];
 
-        if (!empty($ip)) {
-            $httpArgs['ip'] = $ip;
+        $pinned = $migrationData['pinned_ip'] ?? null;
+        if (!is_string($pinned) || $pinned === '') {
+            $pinned = (new DestinationGuard())->assertAllowed($destinationUrl, is_string($ip) && $ip !== '' ? $ip : null);
         }
+
+        if ($pinned !== null) {
+            $httpArgs['ip'] = $pinned;
+        }
+
+        $httpArgs = array_merge($httpArgs, Http::tlsArgs($migrationData));
 
         $response = Http::post($endpointPretty, $httpArgs);
 
@@ -96,7 +107,7 @@ class HtaccessService
 
         if ($statusCode < 200 || $statusCode >= 300) {
             $responseBody = Http::retrieveBody($response);
-            throw new Exception('Destination returned error ' . $statusCode . ': ' . $responseBody);
+            throw new Exception('Destination returned error ' . $statusCode . ': ' . substr((string) $responseBody, 0, 300));
         }
 
         return ['transferred' => true];

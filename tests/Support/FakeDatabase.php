@@ -15,14 +15,20 @@ final class FakeDatabase
 {
     /**
      * Installs the given Database as the singleton, or one backed by the given PDO.
+     *
+     * @param Database|PDO|null $database
      */
-    public static function install(Database|PDO|null $database = null): Database
+    public static function install($database = null): Database
     {
         if (!$database instanceof Database) {
             $pdo = $database ?? new PDO('sqlite::memory:');
             $reflection = new ReflectionClass(Database::class);
             $database = $reflection->newInstanceWithoutConstructor();
-            $reflection->getProperty('pdo')->setValue($database, $pdo);
+            $property = $reflection->getProperty('pdo');
+            if (PHP_VERSION_ID < 80100) {
+                $property->setAccessible(true);
+            }
+            $property->setValue($database, $pdo);
         }
 
         (new ReflectionClass(Database::class))->setStaticPropertyValue('instance', $database);

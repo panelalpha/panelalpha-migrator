@@ -125,6 +125,15 @@ function esc($text) {
                             <p class="description">
                                 <?php _et('If the destination domain is not yet configured, enter the server IP address. The plugin will use this IP for connections while preserving the domain in requests.', 'wordpress-migrator'); ?>
                             </p>
+                            <p>
+                                <label for="destination-insecure-tls">
+                                    <input type="checkbox" id="destination-insecure-tls" disabled />
+                                    <?php _et('Do not verify the HTTPS certificate (only with a manual IP)', 'wordpress-migrator'); ?>
+                                </label>
+                            </p>
+                            <p class="description">
+                                <?php _et('The connection is not checked against a certificate. Use it only when the destination has no valid certificate for the domain yet.', 'wordpress-migrator'); ?>
+                            </p>
                         </div>
 
                         <div class="form-group">

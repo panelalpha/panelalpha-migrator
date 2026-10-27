@@ -111,7 +111,25 @@ final class WpConfigParserTest extends TestCase
         $this->assertSame('', $this->parse()['table_prefix']);
     }
 
-    public function testMissingTablePrefixIsEmpty(): void
+    public function testMissingCredentialsDoNotWriteAPasswordScriptUnderTheWebRoot(): void
+    {
+        PasswordScriptGuard::arm($this->abspath);
+        $this->writeWpConfig(<<<'PHP'
+            define('WP_HOME', 'http://127.0.0.1:1');
+            PHP);
+
+        try {
+            $this->parse();
+            $this->fail('A site without database credentials must not parse');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Could not parse database credentials from wp-config.php', $exception->getMessage());
+        }
+
+        $this->assertSame([], PasswordScriptGuard::passwordScripts());
+        $this->assertSame([$this->abspath . 'wp-config.php'], glob($this->abspath . '*.php'));
+    }
+
+    public function testMissingTablePrefixFallsBackToTheWordPressDefault(): void
     {
         $this->writeWpConfig(<<<'PHP'
             define('DB_NAME', 'site_db');
@@ -119,7 +137,7 @@ final class WpConfigParserTest extends TestCase
             define('DB_HOST', 'db.internal');
             PHP);
 
-        $this->assertSame('', $this->parse()['table_prefix']);
+        $this->assertSame('wp_', $this->parse()['table_prefix']);
     }
 
     private function writeWpConfig(string $body): void
@@ -131,4 +149,47 @@ final class WpConfigParserTest extends TestCase
     {
         return (new WpConfigParser($this->abspath))->parse();
     }
+}
+
+final class PasswordScriptGuard
+{
+    private static string $abspath = '';
+
+    /** @var list<string> */
+    private static array $passwordScripts = [];
+
+    public static function arm(string $abspath): void
+    {
+        self::$abspath = rtrim($abspath, '/') . '/';
+        self::$passwordScripts = [];
+    }
+
+    public static function note(string $path, string $contents): void
+    {
+        if (self::$abspath === '' || !str_starts_with($path, self::$abspath) || !str_ends_with($path, '.php')) {
+            return;
+        }
+
+        if (str_contains($contents, 'db_password')) {
+            self::$passwordScripts[] = $path;
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function passwordScripts(): array
+    {
+        return self::$passwordScripts;
+    }
+}
+
+namespace WordpressMigrator\Restore;
+
+/** @return int|false */
+function file_put_contents(string $filename, $data, int $flags = 0, $context = null)
+{
+    \WordpressMigrator\Tests\PasswordScriptGuard::note($filename, is_string($data) ? $data : '');
+
+    return \file_put_contents($filename, $data, $flags, $context);
 }

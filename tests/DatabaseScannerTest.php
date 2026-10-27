@@ -78,7 +78,7 @@ final class DatabaseScannerTest extends TestCase
 
         $chunk = $this->scanner->getTableChunk('wp_posts', 1, 1);
         self::assertSame(['id', 'slug', 'body'], $chunk->columns);
-        self::assertSame([[2, 'world', 'second']], $chunk->data);
+        self::assertEquals([[2, 'world', 'second']], $chunk->data);
         self::assertSame(1, $chunk->actualRows);
     }
 
@@ -98,14 +98,19 @@ final class DatabaseScannerTest extends TestCase
 /** Supplies MySQL metadata while leaving table discovery and row reads on real SQLite. */
 final class ScannerDatabase extends Database
 {
-    public function __construct(private RecordingPdo $recordingPdo) {}
+    private RecordingPdo $recordingPdo;
+
+    public function __construct(RecordingPdo $recordingPdo)
+    {
+        $this->recordingPdo = $recordingPdo;
+    }
 
     public function getPdo(): PDO
     {
         return $this->recordingPdo;
     }
 
-    public function getRow(string $query, array $params = []): mixed
+    public function getRow(string $query, array $params = [])
     {
         if (str_contains($query, 'information_schema.TABLES')) {
             if (str_contains($query, 'SUM(')) {
@@ -134,7 +139,7 @@ final class ScannerDatabase extends Database
         throw new \LogicException('Unexpected query: ' . $query);
     }
 
-    public function getVar(string $query, array $params = []): mixed
+    public function getVar(string $query, array $params = [])
     {
         if (str_contains($query, 'information_schema.TABLES')) {
             return 250;

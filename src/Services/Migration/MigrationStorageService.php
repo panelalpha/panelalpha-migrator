@@ -17,6 +17,16 @@ use WordpressMigrator\Helpers\JsonCompressor;
  */
 class MigrationStorageService
 {
+    private const SECRET_GUARD = "<?php exit; ?>\n";
+    private const SECRET_OPTION_PREFIX = 'wp_migrator_secret_';
+
+    /**
+     * Keys kept out of the web-readable manifest.
+     * The source token is not kept at all.
+     */
+    private const SECRET_KEYS = ['token'];
+    private const DROPPED_KEYS = ['sourceToken', 'source_token', 'stk'];
+
     /**
      * Gets the file path for a migration.
      *
@@ -42,8 +52,27 @@ class MigrationStorageService
 
         Filesystem::ensureDirectoryExists($migrationDir);
 
-        $json = JsonCompressor::compressToJson($migrationDataArray, JSON_UNESCAPED_SLASHES);
-        $result = @file_put_contents($filePath, $json);
+        $secrets = array_intersect_key($migrationDataArray, array_flip(self::SECRET_KEYS));
+        $public = array_diff_key($migrationDataArray, $secrets, array_flip(self::DROPPED_KEYS));
+
+        if ($secrets !== []) {
+            $secretPath = PathProvider::getMigrationSecretFilePath($migrationId);
+            $secretJson = json_encode($secrets, JSON_UNESCAPED_SLASHES);
+            $saved = $secretJson !== false && Filesystem::writeFileAtomic($secretPath, self::SECRET_GUARD . $secretJson);
+
+            // Hosts such as WP Engine refuse new .php files; the WordPress database is the fallback.
+            if (!$saved && function_exists('update_option')) {
+                update_option(self::SECRET_OPTION_PREFIX . $migrationId, $secrets, false);
+                $saved = get_option(self::SECRET_OPTION_PREFIX . $migrationId) === $secrets;
+            }
+
+            if (!$saved) {
+                throw new \RuntimeException("Failed to save migration data to: {$secretPath}");
+            }
+        }
+
+        $json = JsonCompressor::compressToJson($public, JSON_UNESCAPED_SLASHES);
+        $result = Filesystem::writeFileAtomic($filePath, $json);
 
         if ($result === false) {
             throw new \RuntimeException("Failed to save migration data to: {$filePath}");
@@ -72,7 +101,31 @@ class MigrationStorageService
     {
         $filePath = $this->getMigrationFilePath($migrationId);
         $json = file_get_contents($filePath);
-        return JsonCompressor::decompressFromJson($json);
+        $data = JsonCompressor::decompressFromJson($json);
+
+        return $this->loadSecrets($migrationId) + array_diff_key($data, array_flip(self::DROPPED_KEYS));
+    }
+
+    /**
+     * Loads the secrets stored next to a migration manifest, or in the
+     * WordPress database when the host refused the file.
+     * A secret still present in an old manifest is kept when there is neither.
+     *
+     * @param string $migrationId
+     * @return array
+     */
+    public function loadSecrets(string $migrationId): array
+    {
+        $content = @file_get_contents(PathProvider::getMigrationSecretFilePath($migrationId));
+        if (!is_string($content) || strncmp($content, self::SECRET_GUARD, strlen(self::SECRET_GUARD)) !== 0) {
+            $stored = function_exists('get_option') ? get_option(self::SECRET_OPTION_PREFIX . $migrationId) : false;
+
+            return is_array($stored) ? $stored : [];
+        }
+
+        $secrets = json_decode(substr($content, strlen(self::SECRET_GUARD)), true);
+
+        return is_array($secrets) ? $secrets : [];
     }
     
     /**

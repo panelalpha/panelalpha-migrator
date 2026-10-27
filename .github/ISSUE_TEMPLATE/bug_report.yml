@@ -12,8 +12,8 @@ body:
         > Please report it privately through [manage.panelalpha.com/contact](https://manage.panelalpha.com/contact).
 
         > **A migration stopped halfway?** It can usually be resumed.
-        > Start with [Stop and resume](../blob/master/documentation/02-guides/stop-and-resume.md)
-        > and the troubleshooting in [Migrate a site](../blob/master/documentation/01-getting-started/migrate-a-site.md#troubleshooting);
+        > Start with [Stop and resume](../blob/master/docs/02-guides/stop-and-resume.md)
+        > and the troubleshooting in [Migrate a site](../blob/master/docs/01-getting-started/migrate-a-site.md#troubleshooting);
         > open an issue here if the plugin's own behaviour is wrong.
 
   - type: checkboxes

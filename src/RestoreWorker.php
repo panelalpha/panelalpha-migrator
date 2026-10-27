@@ -23,7 +23,6 @@ use WordpressMigrator\Services\Migration\MigrationRegistry;
 class RestoreWorker
 {
     private RestoreHttpHandler $http;
-    private ChunkProcessor $processor;
     private string $abspath;
 
     /**
@@ -35,9 +34,7 @@ class RestoreWorker
     public function __construct(string $abspath)
     {
         $this->abspath = $abspath;
-        $this->initializeEnvironment();
         $this->http = new RestoreHttpHandler();
-        $this->processor = $this->createChunkProcessor();
     }
 
     /**
@@ -49,11 +46,15 @@ class RestoreWorker
 
         switch ($action) {
             case 'collect-and-restore':
-                $this->handleCollectAndRestore();
-                break;
-
             case 'status':
-                $this->handleStatus();
+                $this->http->authenticate();
+                $this->initializeEnvironment();
+
+                if ($action === 'status') {
+                    $this->handleStatus();
+                } else {
+                    $this->handleCollectAndRestore();
+                }
                 break;
 
             case 'health':
@@ -103,28 +104,10 @@ class RestoreWorker
     }
 
     /**
-     * Creates a ChunkProcessor instance.
-     *
-     * @return ChunkProcessor
-     */
-    private function createChunkProcessor(): ChunkProcessor
-    {
-        $db = Database::getInstance();
-
-        $tableHandler = new TableRestoreHandler($db, new MigrationRegistry('temp'));
-        $fileHandler = new FileRestoreHandler(new MigrationRegistry('temp'), $this->abspath);
-        $chunkService = new ChunkService();
-
-        return new ChunkProcessor($tableHandler, $fileHandler, $chunkService);
-    }
-
-    /**
      * Handles the 'collect-and-restore' action.
      */
     private function handleCollectAndRestore(): void
     {
-        $this->http->authenticate();
-
         $rawData = $this->http->getJsonInputBase64();
         $chunkData = JsonCompressor::isCompressed($rawData)
             ? JsonCompressor::decompress($rawData)
@@ -143,21 +126,14 @@ class RestoreWorker
             $chunkService = new ChunkService();
             $processor = new ChunkProcessor($tableHandler, $fileHandler, $chunkService);
 
-            $result = $processor->process($migrationId, $chunkData);
+            $result = $registry->withStatusLock(fn() => $processor->process($migrationId, $chunkData));
 
-            $this->http->sendJson([
-                'success' => true,
-                'migration_id' => $migrationId,
-                'chunk_type' => $chunkData['type'],
-                'chunk_id' => $chunkData['chunk_id'] ?? null,
-                'processed' => true,
-                'result' => $result,
-                'timestamp' => date('c')
-            ]);
+            $this->http->sendJson(self::acknowledgement($migrationId, $chunkData, $result));
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            error_log('WordPress Migrator: Processing failed: ' . $e->getMessage());
             $this->http->sendJson([
-                'error' => 'Processing failed: ' . $e->getMessage(),
+                'error' => 'Processing failed. Check the PHP error log on the destination.',
                 'migration_id' => $migrationId,
                 'chunk_type' => $chunkData['type'] ?? 'unknown'
             ], 500);
@@ -165,12 +141,35 @@ class RestoreWorker
     }
 
     /**
+     * Builds the acknowledgement returned to the source.
+     * A failed or retryable result is not a successful delivery.
+     * An explicit skip keeps its reason and is acknowledged as such.
+     *
+     * @param string $migrationId
+     * @param array  $chunkData
+     * @param array  $result
+     * @return array
+     */
+    public static function acknowledgement(string $migrationId, array $chunkData, array $result): array
+    {
+        $delivered = empty($result['failed']) && empty($result['can_retry']);
+
+        return [
+            'success' => $delivered,
+            'migration_id' => $migrationId,
+            'chunk_type' => $chunkData['type'] ?? null,
+            'chunk_id' => $chunkData['chunk_id'] ?? null,
+            'processed' => $delivered,
+            'result' => $result,
+            'timestamp' => date('c')
+        ];
+    }
+
+    /**
      * Handles the 'status' action.
      */
     private function handleStatus(): void
     {
-        $this->http->authenticate();
-
         $migrationId = $this->http->getMigrationId();
 
         if (empty($migrationId)) {
@@ -191,8 +190,9 @@ class RestoreWorker
                 'status' => $status
             ]);
 
-        } catch (\Exception $e) {
-            $this->http->sendJson(['error' => 'Status check failed: ' . $e->getMessage()], 500);
+        } catch (\Throwable $e) {
+            error_log('WordPress Migrator: Status check failed: ' . $e->getMessage());
+            $this->http->sendJson(['error' => 'Status check failed. Check the PHP error log on the destination.'], 500);
         }
     }
 }

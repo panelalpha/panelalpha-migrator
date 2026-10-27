@@ -36,7 +36,7 @@ class Request
      * @param mixed|null $default
      * @return mixed
      */
-    public function getParam(string $key, mixed $default = null): mixed
+    public function getParam(string $key, $default = null)
     {
         return $this->params[$key] ?? $this->jsonParams[$key] ?? $default;
     }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace WordpressMigrator\Tests\Support;
 
 use PDO;
-use PDOStatement;
 
 /**
  * An in-memory SQLite PDO that records every statement and answers the MySQL-only ones.
@@ -32,7 +31,8 @@ final class RecordingPdo extends PDO
         parent::exec($statement);
     }
 
-    public function exec(string $statement): int|false
+    #[\ReturnTypeWillChange]
+    public function exec($statement)
     {
         $this->statements[] = $statement;
         $this->failIfAsked($statement);
@@ -44,7 +44,8 @@ final class RecordingPdo extends PDO
         return parent::exec($statement);
     }
 
-    public function prepare(string $query, array $options = []): PDOStatement|false
+    #[\ReturnTypeWillChange]
+    public function prepare($query, $options = [])
     {
         $this->statements[] = $query;
         $this->failIfAsked($query);
@@ -52,7 +53,8 @@ final class RecordingPdo extends PDO
         return parent::prepare($query, $options);
     }
 
-    public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false
+    #[\ReturnTypeWillChange]
+    public function query($query, $fetchMode = null, ...$fetchModeArgs)
     {
         $this->statements[] = $query;
         $this->failIfAsked($query);

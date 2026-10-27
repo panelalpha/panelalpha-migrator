@@ -6,6 +6,7 @@ namespace WordpressMigrator\Services\Backup;
 
 use WordpressMigrator\Services\Scanner\DatabaseScanner;
 use WordpressMigrator\Services\Migration\MigrationStorageService;
+use WordpressMigrator\Helpers\MigrationLock;
 use WordpressMigrator\Helpers\PathProvider;
 use WordpressMigrator\Helpers\JsonCompressor;
 
@@ -20,6 +21,7 @@ class BackupService
 {
     private ?DatabaseScanner $dbScanner;
     private ?MigrationStorageService $storageService;
+    private MigrationLock $lock;
 
     /**
      * BackupService constructor.
@@ -29,10 +31,12 @@ class BackupService
      */
     public function __construct(
         ?DatabaseScanner $dbScanner = null,
-        ?MigrationStorageService $storageService = null
+        ?MigrationStorageService $storageService = null,
+        ?MigrationLock $lock = null
     ) {
         $this->dbScanner = $dbScanner;
         $this->storageService = $storageService;
+        $this->lock = $lock ?? new MigrationLock();
     }
 
     /**
@@ -43,8 +47,9 @@ class BackupService
      */
     public function getDatabaseNextChunk(string $migrationId): ?array
     {
-        $backup = $this->createDatabaseBackupService($migrationId);
-        return $backup->getNextChunk();
+        return $this->mutate($migrationId, function () use ($migrationId) {
+            return $this->createDatabaseBackupService($migrationId)->getNextChunk();
+        });
     }
 
     /**
@@ -85,8 +90,10 @@ class BackupService
      */
     public function getDatabaseNextChunksBatch(string $migrationId, int $batchSize = 50): array
     {
-        $backup = $this->createDatabaseBackupService($migrationId);
-        return $this->processChunksBatch($backup, $batchSize);
+        return $this->mutate($migrationId, function () use ($migrationId, $batchSize) {
+            $backup = $this->createDatabaseBackupService($migrationId);
+            return $this->processChunksBatch($backup, $batchSize);
+        });
     }
 
     /**
@@ -110,8 +117,9 @@ class BackupService
      */
     public function getFileNextChunk(string $migrationId): ?array
     {
-        $backup = $this->createFileBackupService($migrationId);
-        return $backup->getNextChunk();
+        return $this->mutate($migrationId, function () use ($migrationId) {
+            return $this->createFileBackupService($migrationId)->getNextChunk();
+        });
     }
 
     /**
@@ -123,8 +131,10 @@ class BackupService
      */
     public function getFileNextChunksBatch(string $migrationId, int $batchSize = 50): array
     {
-        $backup = $this->createFileBackupService($migrationId);
-        return $this->processChunksBatch($backup, $batchSize);
+        return $this->mutate($migrationId, function () use ($migrationId, $batchSize) {
+            $backup = $this->createFileBackupService($migrationId);
+            return $this->processChunksBatch($backup, $batchSize);
+        });
     }
 
     /**
@@ -136,24 +146,22 @@ class BackupService
      */
     private function processChunksBatch($backup, int $batchSize): array
     {
-        $processedCount = 0;
+        $processedCount = $backup->inBatch(function () use ($backup, $batchSize): int {
+            $count = 0;
 
-        for ($i = 0; $i < $batchSize; $i++) {
-            $chunk = $backup->getNextChunk();
-
-            if ($chunk === null) {
-                break;
+            while ($count < $batchSize && $backup->getNextChunk() !== null) {
+                $count++;
             }
 
-            $processedCount++;
-        }
+            return $count;
+        });
 
         $progress = $backup->getProgress();
 
         return [
             'success' => true,
             'processed_chunks' => $processedCount,
-            'completed' => $processedCount === 0,
+            'completed' => ($progress['is_complete'] ?? false) === true,
             'progress' => $progress
         ];
     }
@@ -276,11 +284,89 @@ class BackupService
             throw new \Exception('Migration file not found');
         }
 
-        $migrationData = $storage->loadMigrationData($migrationId);
-        $migrationData['backup_running'] = $running;
-        $migrationData['backup_last_update'] = date('c');
+        $work = function () use ($storage, $migrationId, $running) {
+            $migrationData = $storage->loadMigrationData($migrationId);
+            $migrationData['backup_running'] = $running;
+            $migrationData['backup_last_update'] = date('c');
+            $storage->saveMigrationData($migrationId, $migrationData);
+        };
 
-        $storage->saveMigrationData($migrationId, $migrationData);
+        // Clearing the flag must work after the lock is gone, or it stays true forever.
+        if (!$running && !$this->holdsLock($migrationId)) {
+            $work();
+            return;
+        }
+
+        $this->mutate($migrationId, $work);
+    }
+
+    /**
+     * Starts the dashboard backup: takes the migration lock and marks the backup as running.
+     *
+     * @param string $migrationId Migration identifier
+     * @throws \Exception When the migration is unknown or another migration holds the lock
+     */
+    public function startBackup(string $migrationId): void
+    {
+        $storage = $this->storageService ?? new \WordpressMigrator\Services\Migration\MigrationStorageService();
+
+        if (!$storage->migrationExists($migrationId)) {
+            throw new \Exception('Migration file not found');
+        }
+
+        $acquired = false;
+        if (!$this->holdsLock($migrationId)) {
+            if (!$this->lock->acquire($migrationId)) {
+                throw new \Exception('Failed to acquire migration lock. Another migration may be running.');
+            }
+            $acquired = true;
+        }
+
+        try {
+            $this->setBackupRunning($migrationId, true);
+        } catch (\Throwable $e) {
+            if ($acquired) {
+                $this->lock->release($migrationId);
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Stops the dashboard backup and clears the running flag.
+     * The lock is released unless the caller is about to finalize, which releases it.
+     *
+     * @param string $migrationId Migration identifier
+     * @param bool   $keepLock    Keep the lock for the finalize step
+     * @throws \Exception
+     */
+    public function stopBackup(string $migrationId, bool $keepLock = false): void
+    {
+        $this->setBackupRunning($migrationId, false);
+
+        if (!$keepLock) {
+            $this->lock->release($migrationId);
+        }
+    }
+
+    private function holdsLock(string $migrationId): bool
+    {
+        $info = $this->lock->getLockInfo();
+
+        return is_array($info) && ($info['migration_id'] ?? null) === $migrationId;
+    }
+
+    /**
+     * One owner mutates a migration. The API batch path and the dashboard
+     * backup path both come through here and share the same lock file.
+     *
+     * @param string   $migrationId
+     * @param callable $work
+     * @return mixed
+     */
+    private function mutate(string $migrationId, callable $work)
+    {
+        return $this->lock->exclusive($migrationId, $work);
     }
 
     /**
@@ -291,6 +377,19 @@ class BackupService
      */
     private function analyzeDatabaseStatus(array $migrationData): ?array
     {
+        if (array_key_exists('backup_database', $migrationData) && $migrationData['backup_database'] === false) {
+            return [
+                'total_tables' => 0,
+                'completed_tables' => 0,
+                'total_chunks' => 0,
+                'sent_chunks' => 0,
+                'percentage' => 0,
+                'status' => 'disabled',
+                'current_table' => null,
+                'next_table' => null,
+            ];
+        }
+
         if (!isset($migrationData['tables']) || empty($migrationData['tables'])) {
             return null;
         }
@@ -317,6 +416,20 @@ class BackupService
      */
     private function analyzeFilesStatus(array $migrationData): ?array
     {
+        if (array_key_exists('backup_files', $migrationData) && $migrationData['backup_files'] === false) {
+            return [
+                'total_files' => 0,
+                'completed_files' => 0,
+                'total_chunks' => 0,
+                'sent_chunks' => 0,
+                'percentage' => 0,
+                'status' => 'disabled',
+                'current_file' => null,
+                'next_file' => null,
+                'skipped_files' => [],
+            ];
+        }
+
         if (!isset($migrationData['files']) || empty($migrationData['files'])) {
             return null;
         }
@@ -500,10 +613,13 @@ class BackupService
      */
     private function extractStatuses(?array $dbStatus, ?array $filesStatus): array
     {
-        return array_filter([
-            $dbStatus['status'] ?? null,
-            $filesStatus['status'] ?? null
-        ]);
+        return array_values(array_filter(
+            [
+                $dbStatus['status'] ?? null,
+                $filesStatus['status'] ?? null,
+            ],
+            static fn ($status): bool => is_string($status) && $status !== '' && $status !== 'disabled'
+        ));
     }
 
     /**

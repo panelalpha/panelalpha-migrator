@@ -22,6 +22,9 @@ trait TemporaryDirectory
         return $directory;
     }
 
+    /**
+     * @after
+     */
     #[After]
     protected function removeTemporaryDirectories(): void
     {

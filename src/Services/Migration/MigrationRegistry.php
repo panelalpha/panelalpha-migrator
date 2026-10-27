@@ -6,6 +6,7 @@ use WordpressMigrator\Helpers\Config;
 use WordpressMigrator\Helpers\Database;
 use WordpressMigrator\Helpers\Filesystem;
 use WordpressMigrator\Helpers\JsonCompressor;
+use WordpressMigrator\Helpers\PathProvider;
 
 /**
  * Class MigrationRegistry
@@ -30,6 +31,13 @@ class MigrationRegistry
     private const ITEM_STATUS_RESTORING = 'restoring';
     private const ITEM_STATUS_RESTORED = 'restored';
 
+    /**
+     * The status read once inside withStatusLock(), shared by every registry
+     * of that migration, so one chunk does not decode the status file again and again.
+     */
+    private static ?string $lockedStatusFile = null;
+    private static ?array $lockedStatus = null;
+
     private string $migrationId;
     private string $migrationDir;
     private string $statusFile;
@@ -43,6 +51,10 @@ class MigrationRegistry
      */
     public function __construct(string $migrationId)
     {
+        if (!PathProvider::isSafeMigrationId($migrationId)) {
+            throw new \InvalidArgumentException('Invalid migration ID');
+        }
+
         $this->migrationId = $migrationId;
         $this->migrationDir = Config::get('migration_dir') . 'collected/' . $migrationId . '/';
         $this->statusFile = $this->migrationDir . 'status.json';
@@ -62,8 +74,41 @@ class MigrationRegistry
 
         $status = $this->buildInitialStatus($migrationInfo);
         $this->saveStatus($status);
+        $this->saveFileChunkIndex($migrationInfo['files'] ?? []);
 
         return true;
+    }
+
+    /**
+     * Runs one chunk under an exclusive lock on the status file, reading the
+     * status once and writing it at most as often as it changes.
+     *
+     * @param callable $callback
+     * @return mixed
+     */
+    public function withStatusLock(callable $callback)
+    {
+        $handle = is_dir($this->migrationDir) ? @fopen($this->migrationDir . 'status.lock', 'c') : false;
+
+        if ($handle === false || !flock($handle, LOCK_EX)) {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+
+            return $callback();
+        }
+
+        self::$lockedStatusFile = $this->statusFile;
+        self::$lockedStatus = null;
+
+        try {
+            return $callback();
+        } finally {
+            self::$lockedStatusFile = null;
+            self::$lockedStatus = null;
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     /**
@@ -116,12 +161,24 @@ class MigrationRegistry
      */
     public function getStatus(): ?array
     {
+        $locked = self::$lockedStatusFile === $this->statusFile;
+
+        if ($locked && self::$lockedStatus !== null) {
+            return self::$lockedStatus;
+        }
+
         if (!file_exists($this->statusFile)) {
             return null;
         }
 
         $json = file_get_contents($this->statusFile);
-        return JsonCompressor::decompressFromJson($json);
+        $status = JsonCompressor::decompressFromJson($json);
+
+        if ($locked) {
+            self::$lockedStatus = $status;
+        }
+
+        return $status;
     }
 
     /**
@@ -213,7 +270,7 @@ class MigrationRegistry
      * @param string|array $types Chunk type, or a list of types
      * @return array|null
      */
-    public function getNextChunkToRestore(string|array $types): ?array
+    public function getNextChunkToRestore($types): ?array
     {
         if (!is_dir($this->migrationDir)) {
             return null;
@@ -238,6 +295,145 @@ class MigrationRegistry
         });
 
         return $ready[0];
+    }
+
+    /**
+     * True when every file and table in the manifest has been restored.
+     * An empty manifest is complete. A missing status is not.
+     * Files the source reports as skipped count as complete.
+     *
+     * @param array $skippedFiles Relative paths the source skipped
+     * @return bool
+     */
+    public function isRestoreComplete(array $skippedFiles = []): bool
+    {
+        $status = $this->getStatus();
+
+        if (!$status) {
+            return false;
+        }
+
+        $skipped = array_flip($this->knownSkippedFiles($status, $skippedFiles));
+
+        foreach ($status['files'] as $path => $file) {
+            $total = (int) ($file['total_chunks'] ?? 0);
+
+            if ((int) ($file['restored_chunks'] ?? 0) < $total && !isset($skipped[(string) $path])) {
+                return false;
+            }
+        }
+
+        foreach ($status['tables'] as $table) {
+            if (empty($table['structure_restored'])) {
+                return false;
+            }
+
+            $total = (int) ($table['total_chunks'] ?? 0);
+
+            if ((int) ($table['restored_chunks'] ?? 0) < $total) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Keeps only the strings that are paths in the manifest.
+     *
+     * @param array $status
+     * @param mixed $skippedFiles
+     * @return string[]
+     */
+    public function knownSkippedFiles(array $status, $skippedFiles): array
+    {
+        if (!is_array($skippedFiles)) {
+            return [];
+        }
+
+        $known = [];
+
+        foreach ($skippedFiles as $path) {
+            if (is_string($path) && isset($status['files'][$path])) {
+                $known[] = $path;
+            }
+        }
+
+        return array_values(array_unique($known));
+    }
+
+    /**
+     * Whether this table chunk number was already counted as restored.
+     *
+     * @param string $tableName
+     * @param int    $chunkNumber
+     * @return bool
+     */
+    public function hasRestoredTableChunk(string $tableName, int $chunkNumber): bool
+    {
+        $status = $this->getStatus();
+        $ids = $status['tables'][$tableName]['restored_chunk_ids'] ?? [];
+
+        return isset($ids[(string) $chunkNumber]);
+    }
+
+    public function hasRestoredFileChunk(string $path, int $chunkNumber): bool
+    {
+        $status = $this->getStatus();
+        $ids = $status['files'][$path]['restored_chunk_ids'] ?? [];
+
+        return isset($ids[(string) $chunkNumber]);
+    }
+
+    /**
+     * Expected offset and size for a file chunk, from the stored manifest.
+     * Null when this migration has no manifest entry for the chunk.
+     *
+     * @param string $path
+     * @param int    $chunkNumber
+     * @return array|null
+     */
+    public function expectedFileChunk(string $path, int $chunkNumber): ?array
+    {
+        $indexJson = @file_get_contents($this->migrationDir . 'file_chunks.json');
+        $index = is_string($indexJson) ? json_decode($indexJson, true) : null;
+
+        if (is_array($index)) {
+            $chunk = $index[$path][$chunkNumber - 1] ?? null;
+
+            return is_array($chunk) && count($chunk) === 2
+                ? ['offset' => (int) $chunk[0], 'size' => (int) $chunk[1], 'chunk_number' => $chunkNumber]
+                : null;
+        }
+
+        $infoFile = $this->migrationDir . 'migration_info.json';
+
+        if (!is_file($infoFile)) {
+            return null;
+        }
+
+        $info = JsonCompressor::decompressFromJson((string) file_get_contents($infoFile));
+
+        foreach (($info['files'] ?? []) as $file) {
+            if (($file['path'] ?? '') !== $path) {
+                continue;
+            }
+
+            $chunks = $file['chunks'] ?? [];
+            $chunk = $chunks[$chunkNumber - 1] ?? null;
+
+            if (!is_array($chunk) || !isset($chunk['offset'], $chunk['size'])) {
+                return null;
+            }
+
+            return [
+                'offset' => (int) $chunk['offset'],
+                'size' => (int) $chunk['size'],
+                'chunk_number' => $chunkNumber,
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -627,6 +823,18 @@ class MigrationRegistry
             return;
         }
 
+        $chunkNumber = $chunkData['file']['chunk_info']['chunk_number'] ?? null;
+
+        if ($chunkNumber !== null) {
+            $key = (string) $chunkNumber;
+
+            if (isset($status['files'][$path]['restored_chunk_ids'][$key])) {
+                return;
+            }
+
+            $status['files'][$path]['restored_chunk_ids'][$key] = true;
+        }
+
         $status['files'][$path]['restored_chunks']++;
 
         $isComplete = $status['files'][$path]['restored_chunks'] >= $status['files'][$path]['total_chunks'];
@@ -668,6 +876,20 @@ class MigrationRegistry
             return;
         }
 
+        $chunkNumber = $chunkData['table']['chunk_info']['chunk_number']
+            ?? $chunkData['table']['chunk_info']['chunkNumber']
+            ?? null;
+
+        if ($chunkNumber !== null) {
+            $key = (string) $chunkNumber;
+
+            if (isset($status['tables'][$tableName]['restored_chunk_ids'][$key])) {
+                return;
+            }
+
+            $status['tables'][$tableName]['restored_chunk_ids'][$key] = true;
+        }
+
         $status['tables'][$tableName]['restored_chunks']++;
 
         $isComplete = $status['tables'][$tableName]['restored_chunks'] >= $status['tables'][$tableName]['total_chunks'];
@@ -706,7 +928,44 @@ class MigrationRegistry
     private function saveStatus(array $status): bool
     {
         $json = JsonCompressor::compressToJson($status);
-        return file_put_contents($this->statusFile, $json) !== false;
+        $saved = Filesystem::writeFileAtomic($this->statusFile, $json);
+
+        if (self::$lockedStatusFile === $this->statusFile) {
+            self::$lockedStatus = $saved ? $status : null;
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Writes the offset and size of every file chunk to a small index,
+     * so checking one chunk does not decode the whole manifest.
+     *
+     * @param array $files
+     */
+    private function saveFileChunkIndex(array $files): void
+    {
+        $indexFile = $this->migrationDir . 'file_chunks.json';
+        $index = [];
+
+        foreach ($files as $file) {
+            // Without every chunk list the manifest stays the only source.
+            if (!isset($file['path']) || !is_array($file['chunks'] ?? null)) {
+                @unlink($indexFile);
+                return;
+            }
+
+            $index[$file['path']] = array_map(
+                fn($chunk) => [(int) ($chunk['offset'] ?? 0), (int) ($chunk['size'] ?? 0)],
+                $file['chunks']
+            );
+        }
+
+        $json = json_encode($index, JSON_UNESCAPED_SLASHES);
+
+        if ($json === false || !Filesystem::writeFileAtomic($indexFile, $json)) {
+            @unlink($indexFile);
+        }
     }
 
     /**

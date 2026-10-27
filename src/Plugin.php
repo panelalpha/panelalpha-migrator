@@ -117,13 +117,50 @@ class Plugin
     {
         $migrationDir = PathProvider::getMigrationDir();
 
-        if (file_exists($migrationDir)) {
+        if (!file_exists($migrationDir)) {
+            $this->ensureParentDirectoryIsWritable($migrationDir);
+            $this->createDirectoryStructure($migrationDir);
+        }
+
+        if (!is_dir($migrationDir)) {
             return;
         }
 
-        $this->ensureParentDirectoryIsWritable($migrationDir);
-        $this->createDirectoryStructure($migrationDir);
+        $this->createProtectionFiles($migrationDir);
+
+        $collectedDir = $migrationDir . 'collected/';
+        if (is_dir($collectedDir) || Filesystem::mkdirP($collectedDir)) {
+            $this->createIndexFile($collectedDir);
+        }
+    }
+
+    /**
+     * Adds the files that keep the migration directory private, when missing.
+     *
+     * @param string $migrationDir Migration directory path
+     */
+    private function createProtectionFiles(string $migrationDir): void
+    {
         $this->createHtaccessFile($migrationDir);
+        $this->createIndexFile($migrationDir);
+    }
+
+    /**
+     * Creates an empty index.php to stop directory listing.
+     *
+     * @param string $directory Directory path with trailing slash
+     */
+    private function createIndexFile(string $directory): void
+    {
+        $indexFile = $directory . 'index.php';
+
+        if (file_exists($indexFile)) {
+            return;
+        }
+
+        if (@file_put_contents($indexFile, "<?php\n// Silence is golden.\n") === false) {
+            error_log("WordPress Migrator: Failed to create index file: {$indexFile}");
+        }
     }
 
     /**
@@ -167,8 +204,14 @@ class Plugin
      */
     private function createHtaccessFile(string $migrationDir): void
     {
-        $htaccessContent = "Order deny,allow\nDeny from all";
         $htaccessFile = $migrationDir . '.htaccess';
+
+        if (file_exists($htaccessFile) && trim((string) @file_get_contents($htaccessFile)) !== "Order deny,allow\nDeny from all") {
+            return;
+        }
+
+        $htaccessContent = "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n"
+            . "<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n";
 
         if (@file_put_contents($htaccessFile, $htaccessContent) === false) {
             error_log("WordPress Migrator: Failed to create .htaccess file: {$htaccessFile}");

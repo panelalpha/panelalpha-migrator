@@ -12,7 +12,8 @@ use WordpressMigrator\Services\RemoteSync\RemoteSyncExecutor;
 
 final class RemoteSyncExecutorTest extends TestCase
 {
-    private BackupService&MockObject $backupService;
+    /** @var BackupService&MockObject */
+    private MockObject $backupService;
 
     private RemoteSyncExecutor $executor;
 

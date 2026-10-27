@@ -18,8 +18,58 @@ class TokenHelper
      */
     public static function getToken(): ?string
     {
-        $config = self::getConfig();
-        return $config['token'] ?? null;
+        $pluginDir = defined('WP_MIGRATOR_PLUGIN_DIR')
+            ? WP_MIGRATOR_PLUGIN_DIR
+            : dirname(__DIR__, 2) . '/';
+
+        $token = self::readToken($pluginDir . 'config.php');
+
+        return $token === '' ? null : $token;
+    }
+
+    /**
+     * Reads the token from config.php.
+     *
+     * The file text is read first, because right after a token change the
+     * opcode cache can still answer an include with the previous config.php.
+     *
+     * @param string $configFilePath
+     * @return string Empty when no token is configured
+     */
+    public static function readToken(string $configFilePath): string
+    {
+        if (!file_exists($configFilePath)) {
+            return '';
+        }
+
+        $content = @file_get_contents($configFilePath);
+        if (is_string($content) && preg_match("/'token'\s*=>\s*'([^']*)'/", $content, $matches)) {
+            return $matches[1];
+        }
+
+        $configData = include $configFilePath;
+        $token = is_array($configData) ? ($configData['token'] ?? '') : '';
+
+        return is_string($token) ? $token : '';
+    }
+
+    /**
+     * Gets the token for requests to the destination from the migration data.
+     * The site's own token is never sent to the destination.
+     *
+     * @param array $migrationData
+     * @return string
+     * @throws \RuntimeException
+     */
+    public static function forMigration(array $migrationData): string
+    {
+        $token = $migrationData['token'] ?? null;
+
+        if (!is_string($token) || $token === '') {
+            throw new \RuntimeException('Destination token not found in migration data');
+        }
+
+        return $token;
     }
 
     /**

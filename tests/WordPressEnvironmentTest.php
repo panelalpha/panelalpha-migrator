@@ -15,6 +15,8 @@ use WordpressMigrator\Tests\Support\TemporaryDirectory;
 /**
  * Helpers that read WordPress and plugin constants. Each test runs in its own process,
  * because a constant cannot be undefined.
+ *
+ * @runTestsInSeparateProcesses
  */
 #[RunTestsInSeparateProcesses]
 final class WordPressEnvironmentTest extends TestCase
@@ -26,13 +28,13 @@ final class WordPressEnvironmentTest extends TestCase
         define('WP_MIGRATOR_MIGRATION_DIR', '/wp/wp-content/migrations/');
         define('WP_MIGRATOR_PLUGIN_DIR', '/wp/wp-content/plugins/wordpress-migrator/');
         define('WP_MIGRATOR_PLUGIN_URL', 'https://example.com/wp-content/plugins/wordpress-migrator/');
-        define('WP_MIGRATOR_VERSION', '1.1.4');
+        define('WP_MIGRATOR_VERSION', '1.2.0');
         Config::set('migration_dir', '/elsewhere/');
 
         $this->assertSame('/wp/wp-content/migrations/', PathProvider::getMigrationDir());
         $this->assertSame('/wp/wp-content/plugins/wordpress-migrator/', PathProvider::getPluginDir());
         $this->assertSame('https://example.com/wp-content/plugins/wordpress-migrator/', PathProvider::getPluginUrl());
-        $this->assertSame('1.1.4', PathProvider::getVersion());
+        $this->assertSame('1.2.0', PathProvider::getVersion());
     }
 
     public function testOrdinarySiteUsesAbspath(): void
@@ -159,7 +161,7 @@ final class WordPressEnvironmentTest extends TestCase
         define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
         define('WP_MIGRATOR_PLUGIN_URL', 'https://old.example.com/wp-content/plugins/wordpress-migrator/');
         define('WP_MIGRATOR_MIGRATION_DIR', $abspath . 'wp-content/migrations/');
-        define('WP_MIGRATOR_VERSION', '1.1.4');
+        define('WP_MIGRATOR_VERSION', '1.2.0');
         define('WP_SITEURL', 'https://old.example.com');
         define('WP_HOME', 'https://www.old.example.com');
 
@@ -167,7 +169,7 @@ final class WordPressEnvironmentTest extends TestCase
 
         $this->assertSame($pluginDir, Config::get('plugin_dir'));
         $this->assertSame($abspath . 'wp-content/migrations/', Config::get('migration_dir'));
-        $this->assertSame('1.1.4', Config::get('version'));
+        $this->assertSame('1.2.0', Config::get('version'));
         $this->assertSame('https://old.example.com', Config::get('site_url'));
         $this->assertSame('https://www.old.example.com', Config::get('home_url'));
         $this->assertSame('6.8.1', Config::get('wp_version'));
@@ -183,7 +185,7 @@ final class WordPressEnvironmentTest extends TestCase
         define('WP_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
         define('WP_MIGRATOR_PLUGIN_URL', '');
         define('WP_MIGRATOR_MIGRATION_DIR', '/tmp/migrations/');
-        define('WP_MIGRATOR_VERSION', '1.1.4');
+        define('WP_MIGRATOR_VERSION', '1.2.0');
         $_SERVER['HTTPS'] = 'on';
         $_SERVER['HTTP_HOST'] = 'shop.example.com';
 
