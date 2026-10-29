@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 use Exception;
 

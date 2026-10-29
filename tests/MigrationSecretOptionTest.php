@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * @runTestsInSeparateProcesses
@@ -35,7 +35,7 @@ final class MigrationSecretOptionTest extends TestCase
         $storage->saveMigrationData('mig_1', ['token' => 'destination-secret', 'destination_url' => 'https://new.example.com']);
 
         $this->assertStringNotContainsString('destination-secret', file_get_contents($migrationDir . 'mig_1.json'));
-        $this->assertSame(['token' => 'destination-secret'], $GLOBALS['wpm_options']['wp_migrator_secret_mig_1']);
+        $this->assertSame(['token' => 'destination-secret'], $GLOBALS['wpm_options']['panelalpha_migrator_secret_mig_1']);
         $this->assertSame('destination-secret', $storage->loadMigrationData('mig_1')['token']);
     }
 }

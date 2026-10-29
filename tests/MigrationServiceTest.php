@@ -2,22 +2,22 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Dto\Migration;
-use WordpressMigrator\Dto\MigrationSummary;
-use WordpressMigrator\Dto\TableInfo;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Dto\Migration;
+use PanelAlpha\Migrator\Dto\MigrationSummary;
+use PanelAlpha\Migrator\Dto\TableInfo;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class MigrationServiceTest extends TestCase
 {

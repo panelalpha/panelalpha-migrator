@@ -1,18 +1,18 @@
 <?php
 
-namespace WordpressMigrator\Services\Scanner;
+namespace PanelAlpha\Migrator\Services\Scanner;
 
 use FilesystemIterator;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
-use WordpressMigrator\Dto\FileChunkInfo;
-use WordpressMigrator\Dto\FileInfo;
+use PanelAlpha\Migrator\Dto\FileChunkInfo;
+use PanelAlpha\Migrator\Dto\FileInfo;
 
 /**
  * Class FileScanner
  *
- * @package WordpressMigrator\Services\Scanner
+ * @package PanelAlpha\Migrator\Services\Scanner
  *
  * Scans the filesystem to gather information about files.
  */
@@ -84,11 +84,11 @@ class FileScanner
         $filePath = $fileInfo->getPathname();
         $size = $fileInfo->getSize();
         $permissions = substr(sprintf('%o', $fileInfo->getPerms()), -3);
-        $modified = date('c', $fileInfo->getMTime());
+        $modified = gmdate('c', $fileInfo->getMTime());
         $relativePath = $this->getRelativePath($filePath, $rootPath);
 
         if (!$this->validateRelativePath($relativePath, $filePath, $rootPath)) {
-            throw new \RuntimeException("Invalid relative path generated for: $filePath");
+            throw new \RuntimeException(esc_html("Invalid relative path generated for: $filePath"));
         }
 
         $chunks = $this->calculateFileChunks($size);

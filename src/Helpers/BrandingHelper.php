@@ -1,25 +1,25 @@
 <?php
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class BrandingHelper
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
- * Helper for reading branding and configuration from config.php file.
+ * Helper for reading the branding from branding.php, which the PanelAlpha panel may add.
  */
 class BrandingHelper
 {
     /**
-     * Gets the configuration from config.php file.
+     * Gets the content of branding.php.
      *
      * @return array<string, mixed>
      */
     public static function getConfig(): array
     {
-        $pluginDir = defined('WP_MIGRATOR_PLUGIN_DIR')
-            ? WP_MIGRATOR_PLUGIN_DIR
+        $pluginDir = defined('PANELALPHA_MIGRATOR_PLUGIN_DIR')
+            ? PANELALPHA_MIGRATOR_PLUGIN_DIR
             : dirname(__DIR__, 2) . '/';
 
         $configFilePath = $pluginDir . 'branding.php';
@@ -38,7 +38,7 @@ class BrandingHelper
     }
 
     /**
-     * Gets the branding configuration from config.php file.
+     * Gets the branding, with PanelAlpha as the default.
      *
      * @return array{name: string, url: string} Associative array with 'name' and 'url' keys.
      */

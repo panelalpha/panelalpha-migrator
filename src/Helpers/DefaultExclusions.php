@@ -1,11 +1,11 @@
 <?php
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Default exclusions for migration.
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  */
 class DefaultExclusions
 {
@@ -20,6 +20,9 @@ class DefaultExclusions
         // Listing it here would drop every nested .htaccess too (e.g. WooCommerce uploads).
         return [
             'wp-config.php',
+            'panelalpha-migrator',
+            'wp-content/plugins/panelalpha-migrator',
+            // The plugin folder before the rename in 1.2.1.
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',
         ];

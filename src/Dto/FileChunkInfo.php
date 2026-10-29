@@ -1,11 +1,11 @@
 <?php
 
-namespace WordpressMigrator\Dto;
+namespace PanelAlpha\Migrator\Dto;
 
 /**
  * Class FileChunkInfo
  *
- * @package WordpressMigrator\Dto
+ * @package PanelAlpha\Migrator\Dto
  *
  * Data Transfer Object for file chunk information.
  */

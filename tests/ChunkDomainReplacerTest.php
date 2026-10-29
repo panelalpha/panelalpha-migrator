@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Services\Backup\ChunkDomainReplacer;
+use PanelAlpha\Migrator\Services\Backup\ChunkDomainReplacer;
 
 final class ChunkDomainReplacerTest extends TestCase
 {

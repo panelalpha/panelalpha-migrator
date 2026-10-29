@@ -2,23 +2,24 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator;
+namespace PanelAlpha\Migrator;
 
-use WordpressMigrator\Admin\AdminPage;
-use WordpressMigrator\Api\RouteProvider;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\Security;
-use WordpressMigrator\Helpers\TokenHelper;
-use WordpressMigrator\Helpers\BrandingHelper;
+use PanelAlpha\Migrator\Admin\AdminPage;
+use PanelAlpha\Migrator\Api\RouteProvider;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\SetupFile;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Helpers\BrandingHelper;
+use PanelAlpha\Migrator\Restore\ReceiveCleanup;
 
 /**
  * Class Plugin
  *
- * @package WordpressMigrator
+ * @package PanelAlpha\Migrator
  *
- * Main plugin class that initializes and manages the WordPress Migrator plugin.
+ * Main plugin class that initializes and manages the PanelAlpha Migrator plugin.
  */
 class Plugin
 {
@@ -43,6 +44,7 @@ class Plugin
      */
     private function __construct()
     {
+        SetupFile::import();
         Config::init();
         $this->createMigrationDirectory();
         $this->routeProvider = new RouteProvider();
@@ -59,6 +61,9 @@ class Plugin
             add_action('admin_menu', [$this, 'addAdminMenu']);
             add_action('admin_enqueue_scripts', [$this, 'enqueueAdminAssets']);
             add_action('rest_api_init', [$this->routeProvider, 'registerWordPressRoutes']);
+            add_action(ReceiveCleanup::HOOK, [ReceiveCleanup::class, 'runScheduled']);
+            // The event is planned on the first load. A migration replaces the options table, so it is planned again after that.
+            add_action('init', [ReceiveCleanup::class, 'schedule']);
             add_filter('plugin_row_meta', [$this, 'filterPluginRowMeta'], 10, 4);
         }
     }
@@ -79,9 +84,14 @@ class Plugin
             return $plugin_meta;
         }
 
-        $thisPluginBasename = plugin_basename(WP_MIGRATOR_PLUGIN_DIR . 'wordpress-migrator.php');
+        $thisPluginBasename = plugin_basename(PANELALPHA_MIGRATOR_PLUGIN_DIR . 'panelalpha-migrator.php');
 
         if ($plugin_file !== $thisPluginBasename) {
+            return $plugin_meta;
+        }
+
+        // Without branding.php the row keeps the meta WordPress builds itself.
+        if (BrandingHelper::getConfig() === []) {
             return $plugin_meta;
         }
 
@@ -95,14 +105,15 @@ class Plugin
 
         if ($version !== '') {
             $newMeta[] = sprintf(
-                esc_html__('Version %s', 'wordpress-migrator'),
+                /* translators: %s: plugin version number */
+                esc_html__('Version %s', 'panelalpha-migrator'),
                 esc_html($version)
             );
         }
 
         $newMeta[] = sprintf(
             '%s <a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
-            esc_html__('By', 'wordpress-migrator'),
+            esc_html__('By', 'panelalpha-migrator'),
             esc_url($authorUrl),
             esc_html($authorName)
         );
@@ -159,7 +170,7 @@ class Plugin
         }
 
         if (@file_put_contents($indexFile, "<?php\n// Silence is golden.\n") === false) {
-            error_log("WordPress Migrator: Failed to create index file: {$indexFile}");
+            error_log("PanelAlpha Migrator: Failed to create index file: {$indexFile}");
         }
     }
 
@@ -172,13 +183,13 @@ class Plugin
     {
         $parentDir = dirname($migrationDir);
 
-        if (!is_writable($parentDir)) {
-            $errorMessage = "WordPress Migrator: Parent directory is not writable: {$parentDir}";
+        if (!wp_is_writable($parentDir)) {
+            $errorMessage = "PanelAlpha Migrator: Parent directory is not writable: {$parentDir}";
             error_log($errorMessage);
 
             $this->showAdminNotice(
-                'WordPress Migrator: Cannot create migration directory. Please ensure ' .
-                Security::escHtml($parentDir) . ' is writable.'
+                'PanelAlpha Migrator: Cannot create migration directory. Please ensure ' .
+                $parentDir . ' is writable.'
             );
         }
     }
@@ -193,7 +204,7 @@ class Plugin
         $result = Filesystem::mkdirP($migrationDir);
 
         if (!$result) {
-            error_log("WordPress Migrator: Failed to create migration directory: {$migrationDir}");
+            error_log("PanelAlpha Migrator: Failed to create migration directory: {$migrationDir}");
         }
     }
 
@@ -214,7 +225,7 @@ class Plugin
             . "<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n";
 
         if (@file_put_contents($htaccessFile, $htaccessContent) === false) {
-            error_log("WordPress Migrator: Failed to create .htaccess file: {$htaccessFile}");
+            error_log("PanelAlpha Migrator: Failed to create .htaccess file: {$htaccessFile}");
         }
     }
 
@@ -227,7 +238,7 @@ class Plugin
     {
         if (function_exists('add_action')) {
             add_action('admin_notices', function() use ($message) {
-                echo '<div class="notice notice-error"><p>' . $message . '</p></div>';
+                echo '<div class="notice notice-error"><p>' . esc_html($message) . '</p></div>';
             });
         }
     }
@@ -242,10 +253,10 @@ class Plugin
         }
 
         add_menu_page(
-            'WordPress Migrator',
-            'Migrator',
+            __('PanelAlpha Migrator', 'panelalpha-migrator'),
+            __('Migrator', 'panelalpha-migrator'),
             'manage_options',
-            'wordpress-migrator',
+            'panelalpha-migrator',
             [$this, 'renderAdminPage'],
             'dashicons-update',
             80
@@ -268,7 +279,7 @@ class Plugin
      */
     public function enqueueAdminAssets(string $hook): void
     {
-        if ('toplevel_page_wordpress-migrator' !== $hook) {
+        if ('toplevel_page_panelalpha-migrator' !== $hook) {
             return;
         }
 
@@ -286,7 +297,7 @@ class Plugin
         }
 
         wp_enqueue_style(
-            'wp-migrator-admin',
+            'panelalpha-migrator-admin',
             PathProvider::getPluginUrl() . 'assets/css/migrator.css',
             [],
             PathProvider::getVersion()
@@ -303,14 +314,14 @@ class Plugin
         }
 
         wp_enqueue_script(
-            'wp-migrator-admin',
+            'panelalpha-migrator-admin',
             PathProvider::getPluginUrl() . 'assets/js/migrator.js',
             ['jquery'],
             PathProvider::getVersion(),
             true
         );
 
-        wp_localize_script('wp-migrator-admin', 'wpMigrator', $this->getScriptData());
+        wp_localize_script('panelalpha-migrator-admin', 'panelalphaMigrator', $this->getScriptData());
     }
 
     /**
@@ -322,17 +333,17 @@ class Plugin
     {
         return [
             'ajaxUrl' => function_exists('admin_url') ? admin_url('admin-ajax.php') : '',
-            'restUrl' => function_exists('rest_url') ? rest_url('wp-migrator/v1') : '',
+            'restUrl' => function_exists('rest_url') ? rest_url('panelalpha-migrator/v1') : '',
             'nonce' => function_exists('wp_create_nonce') ? wp_create_nonce('wp_rest') : '',
             'token' => TokenHelper::getToken() ?: '',
             'siteUrl' => function_exists('get_site_url') ? get_site_url() : Config::get('site_url', ''),
             'mode' => Config::get('mode', 'source'),
             'showModeSwitcher' => Config::get('show_mode_switcher', true),
             'i18n' => [
-                'scanning' => 'Scanning in progress...',
-                'scanComplete' => 'Scan completed!',
-                'error' => 'An error occurred',
-                'enterUrl' => 'Enter destination WordPress URL',
+                'scanning' => __('Scanning in progress...', 'panelalpha-migrator'),
+                'scanComplete' => __('Scan completed!', 'panelalpha-migrator'),
+                'error' => __('An error occurred', 'panelalpha-migrator'),
+                'enterUrl' => __('Enter destination WordPress URL', 'panelalpha-migrator'),
             ]
         ];
     }
@@ -344,10 +355,6 @@ class Plugin
      */
     public function checkPermissions(): bool
     {
-        if (function_exists('current_user_can')) {
-            return current_user_can('manage_options');
-        }
-
-        return Security::currentUserCan('manage_options');
+        return function_exists('current_user_can') && current_user_can('manage_options');
     }
 }

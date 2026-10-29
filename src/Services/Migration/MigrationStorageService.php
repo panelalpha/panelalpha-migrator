@@ -2,23 +2,23 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
 
 /**
  * Class MigrationStorageService
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Handles storage and retrieval of migration data.
  */
 class MigrationStorageService
 {
     private const SECRET_GUARD = "<?php exit; ?>\n";
-    private const SECRET_OPTION_PREFIX = 'wp_migrator_secret_';
+    private const SECRET_OPTION_PREFIX = 'panelalpha_migrator_secret_';
 
     /**
      * Keys kept out of the web-readable manifest.
@@ -67,7 +67,7 @@ class MigrationStorageService
             }
 
             if (!$saved) {
-                throw new \RuntimeException("Failed to save migration data to: {$secretPath}");
+                throw new \RuntimeException(esc_html("Failed to save migration data to: {$secretPath}"));
             }
         }
 
@@ -75,7 +75,7 @@ class MigrationStorageService
         $result = Filesystem::writeFileAtomic($filePath, $json);
 
         if ($result === false) {
-            throw new \RuntimeException("Failed to save migration data to: {$filePath}");
+            throw new \RuntimeException(esc_html("Failed to save migration data to: {$filePath}"));
         }
     }
 

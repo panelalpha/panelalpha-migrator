@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Refuses migration destinations that point at the local machine or an internal network.
@@ -159,7 +159,7 @@ class DestinationGuard
      */
     private function hostFromUrl(string $destinationUrl): string
     {
-        $parsed = parse_url($destinationUrl);
+        $parsed = wp_parse_url($destinationUrl);
         if (!is_array($parsed) || empty($parsed['host']) || !is_string($parsed['host'])) {
             throw new DestinationNotAllowedException();
         }
@@ -253,9 +253,7 @@ class DestinationGuard
             return $this->stringList($configured);
         }
 
-        $fromFile = TokenHelper::getConfig()['allowed_destinations'] ?? [];
-
-        return is_array($fromFile) ? $this->stringList($fromFile) : [];
+        return TokenHelper::getAllowedDestinations();
     }
 
     /**

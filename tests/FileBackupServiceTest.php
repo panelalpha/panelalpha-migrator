@@ -2,20 +2,21 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Services\Backup\FileBackupService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Backup\FileBackupService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class FileBackupServiceTest extends TestCase
 {
@@ -111,9 +112,8 @@ final class FileBackupServiceTest extends TestCase
     #[RunInSeparateProcess]
     public function testSiteTokenIsNeverSentWhenTheMigrationHasNoDestinationToken(): void
     {
-        $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php return ['token' => 'config-token'];");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        require __DIR__ . '/Support/OptionStubs.php';
+        update_option(TokenHelper::TOKEN_OPTION, 'site-token', false);
         self::writeFile($this->siteDir . 'a.txt', 'hello');
         $this->storage->saveMigrationData('mig_1', [
             'migrationId' => 'mig_1',
@@ -131,6 +131,22 @@ final class FileBackupServiceTest extends TestCase
         $this->assertSame([], $this->destination->requests());
     }
 
+    public function testChunkFollowsTheRestModeSavedWithTheMigration(): void
+    {
+        self::writeFile($this->siteDir . 'a.txt', 'hello world');
+        $this->storage->saveMigrationData('mig_1', [
+            'migrationId' => 'mig_1',
+            'destinationUrl' => $this->destination->url(),
+            'token' => 'secret',
+            'drm' => 'plain',
+            'files' => [$this->fileEntry('a.txt', 'hello world', 11)],
+        ]);
+
+        (new FileBackupService('mig_1'))->getNextChunk();
+
+        $this->assertSame('/?rest_route=/panelalpha-migrator/v1/receive', $this->destination->requests()[0]['uri']);
+    }
+
     public function testSinglePendingChunkIsSentAndMarkedSent(): void
     {
         self::writeFile($this->siteDir . 'a.txt', 'hello world');
@@ -144,7 +160,7 @@ final class FileBackupServiceTest extends TestCase
         $result = (new FileBackupService('mig_1'))->getNextChunk();
 
         $request = $this->destination->requests()[0];
-        $this->assertSame('/wp-content/plugins/wordpress-migrator/restore.php?action=collect-and-restore', $request['uri']);
+        $this->assertSame('/wp-json/panelalpha-migrator/v1/receive', $request['uri']);
         $this->assertSame('secret', $request['headers']['x-migrator-token']);
 
         $body = JsonCompressor::decompressFromJson($request['body']);
@@ -269,7 +285,7 @@ final class FileBackupServiceTest extends TestCase
             'token' => 'secret',
             'files' => [$this->fileEntry('a.txt', 'hello', 5)],
         ]);
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_1',
             'chunk_id' => 'file_chunk_00001',
@@ -300,7 +316,7 @@ final class FileBackupServiceTest extends TestCase
             'token' => 'secret',
             'files' => [$this->fileEntry('wp-config.php', '<?php', 5)],
         ]);
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_1',
             'chunk_id' => 'file_chunk_00001',
@@ -328,7 +344,7 @@ final class FileBackupServiceTest extends TestCase
             'token' => 'secret',
             'files' => [$this->fileEntry('a.txt', 'hello', 5)],
         ]);
-        $this->destination->respondWith('restore.php', 500, '{"error":"boom"}');
+        $this->destination->respondWith('/v1/receive', 500, '{"error":"boom"}');
 
         $service = new FileBackupService('mig_1');
 

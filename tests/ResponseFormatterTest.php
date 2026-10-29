@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\Middleware\ResponseFormatter;
+use PanelAlpha\Migrator\Api\Middleware\ResponseFormatter;
 
 /**
  * Each test runs in its own process because it defines the global rest_ensure_response()

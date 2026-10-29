@@ -2,27 +2,26 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Dto\IndexInfo;
-use WordpressMigrator\Dto\TableChunk;
-use WordpressMigrator\Dto\TableStructure;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Restore\TableRestoreHandler;
-use WordpressMigrator\Services\Backup\DatabaseBackupService;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\RecordingPdo;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Dto\IndexInfo;
+use PanelAlpha\Migrator\Dto\TableChunk;
+use PanelAlpha\Migrator\Dto\TableStructure;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Restore\TableRestoreHandler;
+use PanelAlpha\Migrator\Services\Backup\DatabaseBackupService;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\RecordingWpdb;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class DatabaseBackupServiceTest extends TestCase
 {
@@ -71,26 +70,27 @@ final class DatabaseBackupServiceTest extends TestCase
         $this->assertSame('sent', $this->storage->loadMigrationData('mig_1')['tables'][0]['status']);
         $this->assertNull($service->getNextChunk());
 
-        $pdo = new RecordingPdo();
+        $wpdb = new RecordingWpdb();
+        $wpdb->base_prefix = 'new_';
         $registry = $this->createMock(MigrationRegistry::class);
+        $registry->method('getTableMap')->willReturn([
+            'old_posts' => ['destination' => 'new_posts', 'temp' => 'pmt_ab12cd_new_posts', 'backup' => 'pmb_ab12cd_new_posts'],
+        ]);
         $registry->expects($this->exactly(2))->method('markChunkRestored');
-        $root = $this->createTemporaryDirectory();
-        file_put_contents($root . 'wp-config.php', "<?php\ndefine('DB_NAME', 'db');\ndefine('DB_USER', 'user');\ndefine('DB_HOST', 'db.internal');\n\$table_prefix = 'new_';\n");
-        Config::set('root_path', $root);
-        $handler = new TableRestoreHandler(FakeDatabase::install($pdo), $registry);
+        $handler = new TableRestoreHandler($wpdb, $registry);
 
         $this->assertSame('new_posts', $handler->restoreStructure($structure)['table']);
-        $this->assertContains('DROP TABLE IF EXISTS `new_posts`', $pdo->statements);
-        $pdo->sqlite('CREATE TABLE new_posts (id INTEGER PRIMARY KEY, url TEXT, bytes BLOB)');
+        $this->assertContains('DROP TABLE IF EXISTS `pmt_ab12cd_new_posts`', $wpdb->queries);
+        $wpdb->sqlite('CREATE TABLE pmt_ab12cd_new_posts (id INTEGER PRIMARY KEY, url TEXT, bytes BLOB)');
         $this->assertSame('new_posts', $handler->restoreData($data)['table']);
-        $this->assertEquals([1, $data['data'][0][1], $binary], $pdo->query('SELECT id, url, bytes FROM new_posts')->fetch(\PDO::FETCH_NUM));
+        $this->assertEquals([1, $data['data'][0][1], $binary], $wpdb->rows('SELECT id, url, bytes FROM pmt_ab12cd_new_posts')[0]);
     }
 
     public function testHttpFailureLeavesStructureUnsentAndAllowsRetry(): void
     {
         $this->saveMigration();
         $service = new DatabaseBackupService('mig_1', $this->scanner([[1, 'text', null]]), $this->storage);
-        $this->destination->respondWith('restore.php', 500, '{"error":"boom"}');
+        $this->destination->respondWith('/v1/receive', 500, '{"error":"boom"}');
 
         try {
             $service->getNextChunk();
@@ -109,7 +109,7 @@ final class DatabaseBackupServiceTest extends TestCase
         $this->saveMigration();
         $service = new DatabaseBackupService('mig_1', $this->scanner([[1, 'text', null]]), $this->storage);
         $service->getNextChunk();
-        $this->destination->respondWith('restore.php', 503);
+        $this->destination->respondWith('/v1/receive', 503);
 
         try {
             $service->getNextChunk();

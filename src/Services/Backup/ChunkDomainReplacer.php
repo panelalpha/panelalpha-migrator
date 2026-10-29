@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
 /**
  * Class ChunkDomainReplacer
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Handles domain replacement in chunk data before sending to destination.
  */

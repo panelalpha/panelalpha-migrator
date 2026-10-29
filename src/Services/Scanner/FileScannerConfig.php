@@ -1,11 +1,11 @@
 <?php
 
-namespace WordpressMigrator\Services\Scanner;
+namespace PanelAlpha\Migrator\Services\Scanner;
 
 /**
  * Class FileScannerConfig
  *
- * @package WordpressMigrator\Services\Scanner
+ * @package PanelAlpha\Migrator\Services\Scanner
  *
  * Configuration for the FileScanner.
  */

@@ -2,19 +2,21 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class Http
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Provides HTTP client functionality.
  */
 class Http
 {
     /**
-     * Sends a POST request.
+     * Sends a POST request through the WordPress HTTP API. Redirects are not followed.
+     * The http_api_curl hook limits this request to http and https and pins the host
+     * to the manual IP. A pinned request is never sent without cURL.
      *
      * @param string $url
      * @param array  $args
@@ -22,52 +24,79 @@ class Http
      */
     public static function post(string $url, array $args = [])
     {
-        $headers = $args['headers'] ?? [];
-        $body = $args['body'] ?? '';
-        $timeout = $args['timeout'] ?? 30;
-        $sslverify = $args['sslverify'] ?? true;
+        return self::send('POST', $url, $args);
+    }
+
+    /**
+     * Sends a GET request the same way as post(), without a body.
+     *
+     * @param string $url
+     * @param array  $args
+     * @return HttpResponse|HttpError
+     */
+    public static function get(string $url, array $args = [])
+    {
+        return self::send('GET', $url, $args);
+    }
+
+    /**
+     * @param string $method POST or GET
+     * @param string $url
+     * @param array  $args
+     * @return HttpResponse|HttpError
+     */
+    private static function send(string $method, string $url, array $args)
+    {
         $ip = $args['ip'] ?? null;
+        $resolve = empty($ip) ? [] : self::resolveEntries($url, $ip);
 
-  
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-
-        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
-            curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-        }
-        if (defined('CURLOPT_REDIR_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
-            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        if ($resolve !== [] && !function_exists('curl_init')) {
+            return new HttpError('cURL is required to connect to a pinned IP address');
         }
 
-        if (!empty($ip)) {
-            $resolve = self::resolveEntries($url, $ip);
-            if ($resolve !== []) {
-                curl_setopt($ch, CURLOPT_RESOLVE, $resolve);
+        $pinned = false;
+        // WordPress offers no other way to pin the connection to an IP address.
+        $hook = static function ($handle, $parsedArgs) use ($resolve, &$pinned): void {
+            if (empty($parsedArgs['panelalpha_migrator_request'])) {
+                return;
             }
+
+            if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
+                curl_setopt($handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_setopt
+            }
+            if (defined('CURLOPT_REDIR_PROTOCOLS') && defined('CURLPROTO_HTTP') && defined('CURLPROTO_HTTPS')) {
+                curl_setopt($handle, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_setopt
+            }
+            if ($resolve !== []) {
+                curl_setopt($handle, CURLOPT_RESOLVE, $resolve); // phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_setopt
+                $pinned = true;
+            }
+        };
+
+        add_action('http_api_curl', $hook, 10, 2);
+        try {
+            $requestArgs = [
+                'headers' => $args['headers'] ?? [],
+                'body' => $args['body'] ?? '',
+                'timeout' => $args['timeout'] ?? 30,
+                'sslverify' => $args['sslverify'] ?? true,
+                'redirection' => 0,
+                'panelalpha_migrator_request' => true,
+            ];
+            $response = $method === 'GET' ? wp_remote_get($url, $requestArgs) : wp_remote_post($url, $requestArgs);
+        } finally {
+            remove_action('http_api_curl', $hook, 10);
         }
 
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $sslverify);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $sslverify ? 2 : 0);
-
-        $curlHeaders = [];
-        foreach ($headers as $key => $value) {
-            $curlHeaders[] = "$key: $value";
-        }
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $curlHeaders);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-
-        if ($error) {
-            return new HttpError($error);
+        if (is_wp_error($response)) {
+            return new HttpError($response->get_error_message());
         }
 
-        return new HttpResponse($response, $httpCode);
+        if ($resolve !== [] && !$pinned) {
+            return new HttpError('The request was not sent over cURL, so the pinned IP address was not used');
+        }
+
+        return new HttpResponse(wp_remote_retrieve_body($response), (int) wp_remote_retrieve_response_code($response));
     }
 
     /**
@@ -94,7 +123,7 @@ class Http
      */
     private static function resolveEntries(string $url, string $ip): array
     {
-        $parsedUrl = parse_url($url);
+        $parsedUrl = wp_parse_url($url);
         if (!is_array($parsedUrl)) {
             return [];
         }

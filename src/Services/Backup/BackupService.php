@@ -2,18 +2,18 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
 
 /**
  * Class BackupService
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Service for handling backup operations with dependency injection.
  */
@@ -278,7 +278,7 @@ class BackupService
      */
     public function setBackupRunning(string $migrationId, bool $running): void
     {
-        $storage = $this->storageService ?? new \WordpressMigrator\Services\Migration\MigrationStorageService();
+        $storage = $this->storageService ?? new \PanelAlpha\Migrator\Services\Migration\MigrationStorageService();
 
         if (!$storage->migrationExists($migrationId)) {
             throw new \Exception('Migration file not found');
@@ -287,7 +287,7 @@ class BackupService
         $work = function () use ($storage, $migrationId, $running) {
             $migrationData = $storage->loadMigrationData($migrationId);
             $migrationData['backup_running'] = $running;
-            $migrationData['backup_last_update'] = date('c');
+            $migrationData['backup_last_update'] = gmdate('c');
             $storage->saveMigrationData($migrationId, $migrationData);
         };
 
@@ -308,7 +308,7 @@ class BackupService
      */
     public function startBackup(string $migrationId): void
     {
-        $storage = $this->storageService ?? new \WordpressMigrator\Services\Migration\MigrationStorageService();
+        $storage = $this->storageService ?? new \PanelAlpha\Migrator\Services\Migration\MigrationStorageService();
 
         if (!$storage->migrationExists($migrationId)) {
             throw new \Exception('Migration file not found');
@@ -650,7 +650,7 @@ class BackupService
     private function getLastActivityTimestamp(string $filePath): ?string
     {
         $mtime = filemtime($filePath);
-        return $mtime ? date('c', $mtime) : null;
+        return $mtime ? gmdate('c', $mtime) : null;
     }
 
     /**

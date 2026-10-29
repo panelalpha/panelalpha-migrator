@@ -1,25 +1,34 @@
 <?php
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
-use WordpressMigrator\Dto\Migration;
-use WordpressMigrator\Dto\MigrationSummary;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Database;
-use WordpressMigrator\Helpers\DateTime;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
-use WordpressMigrator\Restore\WpConfigParser;
+use PanelAlpha\Migrator\Dto\Migration;
+use PanelAlpha\Migrator\Dto\MigrationSummary;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DateTime;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
 
 /**
  * Class MigrationInfoGenerator
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Generates migration information.
  */
 class MigrationInfoGenerator
 {
+    private ?object $wpdb;
+
+    /**
+     * MigrationInfoGenerator constructor.
+     *
+     * @param \wpdb|null $wpdb The global $wpdb when not given
+     */
+    public function __construct(?object $wpdb = null)
+    {
+        $this->wpdb = $wpdb;
+    }
+
     /**
      * Generates a Migration object with all the necessary information.
      *
@@ -65,7 +74,7 @@ class MigrationInfoGenerator
             $dbChunks
         );
 
-        // Get token from config.php file
+        // Get the site token from the plugin options
         $sourceToken = TokenHelper::getToken();
 
         return new Migration(
@@ -92,22 +101,9 @@ class MigrationInfoGenerator
      */
     private function getSourceTablePrefix(): string
     {
-        if (isset($GLOBALS['table_prefix']) && is_string($GLOBALS['table_prefix']) && $GLOBALS['table_prefix'] !== '') {
-            return $GLOBALS['table_prefix'];
-        }
+        $prefix = $this->wpdb()->base_prefix ?? '';
 
-        try {
-            $parser = new WpConfigParser(PathProvider::getAbsPath());
-            $config = $parser->parse();
-            $prefix = $config['table_prefix'] ?? '';
-            if (is_string($prefix) && $prefix !== '') {
-                return $prefix;
-            }
-        } catch (\Throwable $e) {
-            // Fall through to default.
-        }
-
-        return 'wp_';
+        return is_string($prefix) && $prefix !== '' ? $prefix : 'wp_';
     }
 
     /**
@@ -140,10 +136,19 @@ class MigrationInfoGenerator
      */
     private function getMysqlVersion()
     {
-        $db = Database::getInstance();
-        $version = $db->getVar('SELECT VERSION()');
+        $version = $this->wpdb()->get_var('SELECT VERSION()');
 
         return $version ?: 'unknown';
+    }
+
+    /**
+     * Gets the database connection.
+     *
+     * @return \wpdb
+     */
+    private function wpdb(): object
+    {
+        return $this->wpdb ?? $GLOBALS['wpdb'];
     }
 
     /**

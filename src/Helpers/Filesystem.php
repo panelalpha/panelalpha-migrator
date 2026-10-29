@@ -2,30 +2,55 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class Filesystem
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Provides filesystem utility functions.
  */
 class Filesystem
 {
     /**
+     * @var \WP_Filesystem_Direct|null
+     */
+    private static $direct;
+
+    /**
+     * Returns the direct WordPress filesystem.
+     * The global $wp_filesystem may use FTP or SSH, which needs credentials
+     * and cannot run in a REST call, so the direct one is used.
+     *
+     * @return \WP_Filesystem_Direct
+     */
+    public static function direct(): \WP_Filesystem_Direct
+    {
+        if (self::$direct === null) {
+            if (!class_exists('WP_Filesystem_Direct', false)) {
+                require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-base.php';
+                require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-direct.php';
+            }
+
+            self::$direct = new \WP_Filesystem_Direct(null);
+        }
+
+        return self::$direct;
+    }
+
+    /**
      * Creates a directory recursively.
      *
      * @param string $path
-     * @param int    $permissions
      * @return bool
      */
-    public static function mkdirP(string $path, int $permissions = 0755): bool
+    public static function mkdirP(string $path): bool
     {
         if (!file_exists($path)) {
-            $result = @mkdir($path, $permissions, true);
+            $result = wp_mkdir_p($path);
             if (!$result) {
-                error_log("WordPress Migrator: Failed to create directory: {$path}");
+                error_log("PanelAlpha Migrator: Failed to create directory: {$path}");
             }
             return $result;
         }
@@ -54,7 +79,7 @@ class Filesystem
         if (!is_dir($path)) {
             $result = self::mkdirP($path);
             if (!$result) {
-                throw new \RuntimeException("Failed to create directory: {$path}");
+                throw new \RuntimeException(esc_html("Failed to create directory: {$path}"));
             }
         }
     }
@@ -81,12 +106,13 @@ class Filesystem
         $written = @file_put_contents($temporary, $contents, LOCK_EX);
 
         if ($written === false) {
-            @unlink($temporary);
+            wp_delete_file($temporary);
             return @file_put_contents($path, $contents, LOCK_EX) === strlen($contents);
         }
 
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- the atomic replace needs rename(), WP_Filesystem::move() with overwrite deletes the old file first, so the file is missing for a moment
         if (!@rename($temporary, $path)) {
-            @unlink($temporary);
+            wp_delete_file($temporary);
             return false;
         }
 

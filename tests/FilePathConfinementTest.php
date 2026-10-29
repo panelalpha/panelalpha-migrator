@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Restore\FilePathConfinement;
+use PanelAlpha\Migrator\Restore\FilePathConfinement;
 
 final class FilePathConfinementTest extends TestCase
 {

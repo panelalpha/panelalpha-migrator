@@ -1,11 +1,11 @@
 <?php
 
-namespace WordpressMigrator\Services\Scanner;
+namespace PanelAlpha\Migrator\Services\Scanner;
 
 /**
  * Class FileExclusionService
  *
- * @package WordpressMigrator\Services\Scanner
+ * @package PanelAlpha\Migrator\Services\Scanner
  *
  * Service for checking if a file or directory should be excluded from the scan.
  */

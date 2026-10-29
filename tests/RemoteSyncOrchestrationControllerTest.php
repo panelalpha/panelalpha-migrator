@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\Controllers\RemoteSyncOrchestrationController;
-use WordpressMigrator\Helpers\DestinationNotAllowedException;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
+use PanelAlpha\Migrator\Api\Controllers\RemoteSyncOrchestrationController;
+use PanelAlpha\Migrator\Helpers\DestinationNotAllowedException;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncOrchestrationService;
 
 /**
  * @runTestsInSeparateProcesses

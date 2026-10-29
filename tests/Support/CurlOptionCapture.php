@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests\Support;
+namespace PanelAlpha\Migrator\Tests\Support;
 
 final class CurlOptionCapture
 {
@@ -50,12 +50,12 @@ final class CurlOptionCapture
     }
 }
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /** @param mixed $value */
 function curl_setopt($handle, int $option, $value): bool
 {
-    \WordpressMigrator\Tests\Support\CurlOptionCapture::record($option, $value);
+    \PanelAlpha\Migrator\Tests\Support\CurlOptionCapture::record($option, $value);
 
     return \curl_setopt($handle, $option, $value);
 }

@@ -1,13 +1,13 @@
 <?php
 
-namespace WordpressMigrator\Admin;
+namespace PanelAlpha\Migrator\Admin;
 
-use WordpressMigrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Config;
 
 /**
  * Class AdminPage
  *
- * @package WordpressMigrator\Admin
+ * @package PanelAlpha\Migrator\Admin
  *
  * This class is responsible for rendering the admin page of the plugin.
  */

@@ -1,11 +1,15 @@
 <?php
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
+
+// The lock needs an exclusive create (fopen mode x) and an update under flock, which
+// WP_Filesystem does not offer.
+// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 
 /**
  * Migration lock manager using file-based locking.
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  */
 class MigrationLock
 {
@@ -23,8 +27,8 @@ class MigrationLock
     {
         if ($lockFile === null) {
             $base = defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR : sys_get_temp_dir();
-            $lockFile = $base . '/wp-migrator-lock.php';
-            $this->legacyLockFile = $base . '/wp-migrator-lock.json';
+            $lockFile = $base . '/panelalpha-migrator-lock.php';
+            $this->legacyLockFile = $base . '/panelalpha-migrator-lock.json';
         }
 
         $this->lockFile = $lockFile;
@@ -75,7 +79,7 @@ class MigrationLock
         }
 
         $dir = dirname($this->lockFile);
-        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        if (!is_dir($dir) && !wp_mkdir_p($dir)) {
             return false;
         }
 
@@ -96,7 +100,7 @@ class MigrationLock
         $lockData = array_merge([
             'migration_id' => $migrationId,
             'timestamp' => time(),
-            'started_at' => date('Y-m-d H:i:s'),
+            'started_at' => gmdate('Y-m-d H:i:s'),
             'pid' => function_exists('posix_getpid') ? posix_getpid() : getmypid(),
         ], $additionalData);
 
@@ -105,7 +109,7 @@ class MigrationLock
         fclose($handle);
 
         if (!$written) {
-            @unlink($lockFile);
+            wp_delete_file($lockFile);
             return false;
         }
 
@@ -133,7 +137,10 @@ class MigrationLock
             }
         }
 
-        return @unlink($this->activeFile());
+        $file = $this->activeFile();
+        wp_delete_file($file);
+
+        return !file_exists($file);
     }
 
     /**
@@ -215,7 +222,7 @@ class MigrationLock
         }
 
         $updatedLock = array_merge($lock, $data, [
-            'updated_at' => date('Y-m-d H:i:s'),
+            'updated_at' => gmdate('Y-m-d H:i:s'),
             'timestamp' => time(),
         ]);
 
@@ -286,7 +293,7 @@ class MigrationLock
         }
 
         if (file_exists($this->lockFile)) {
-            @unlink($this->legacyLockFile);
+            wp_delete_file($this->legacyLockFile);
         }
     }
 
@@ -300,7 +307,7 @@ class MigrationLock
     {
         $dir = dirname($this->activeFile());
         if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0755, true)) {
+            if (!wp_mkdir_p($dir)) {
                 return false;
             }
         }

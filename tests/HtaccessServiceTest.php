@@ -2,20 +2,21 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Services\Migration\HtaccessService;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Migration\HtaccessService;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class HtaccessServiceTest extends TestCase
 {
@@ -47,7 +48,7 @@ final class HtaccessServiceTest extends TestCase
 
         $requests = $this->destination->requests();
         $this->assertCount(1, $requests);
-        $this->assertSame('/wp-json/wp-migrator/v1/receive-htaccess', $requests[0]['uri']);
+        $this->assertSame('/wp-json/panelalpha-migrator/v1/receive-htaccess', $requests[0]['uri']);
         $this->assertSame('POST', $requests[0]['method']);
         $this->assertSame('application/json', $requests[0]['headers']['content-type']);
         $this->assertSame('secret', $requests[0]['headers']['x-migrator-token']);
@@ -111,9 +112,8 @@ final class HtaccessServiceTest extends TestCase
     #[PreserveGlobalState(false)]
     public function testTransferNeverSendsTheSiteTokenToTheDestination(): void
     {
-        $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php\nreturn ['token' => 'config-token'];\n");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        require __DIR__ . '/Support/OptionStubs.php';
+        update_option(TokenHelper::TOKEN_OPTION, 'site-token', false);
         self::writeFile($this->siteDir . '.htaccess', 'RewriteEngine On');
         $this->saveMigration(['destinationUrl' => $this->destination->url()], false);
 
@@ -153,19 +153,33 @@ final class HtaccessServiceTest extends TestCase
         $this->assertSame([], $this->destination->requests());
     }
 
-    public function test404RetriesThroughNonPrettyRestRouteWithSameBody(): void
+    public function testPlainRestModeFromTheMigrationDataPostsToTheRestRouteQuery(): void
     {
         self::writeFile($this->siteDir . '.htaccess', 'RewriteEngine On');
-        $this->saveMigration(['destination_url' => $this->destination->url(), 'token' => 'secret']);
-        $this->destination->respondWith('/wp-json/', 404);
+        $this->saveMigration(['destination_url' => $this->destination->url(), 'token' => 'secret', 'drm' => 'plain']);
 
         $this->assertSame(['transferred' => true], (new HtaccessService())->transfer('mig_1'));
 
         $requests = $this->destination->requests();
-        $this->assertCount(2, $requests);
-        $this->assertSame('/?rest_route=/wp-migrator/v1/receive-htaccess', $requests[1]['uri']);
-        $this->assertSame($requests[0]['body'], $requests[1]['body']);
-        $this->assertSame($requests[0]['headers']['x-migrator-token'], $requests[1]['headers']['x-migrator-token']);
+        $this->assertCount(1, $requests);
+        $this->assertSame('/?rest_route=/panelalpha-migrator/v1/receive-htaccess', $requests[0]['uri']);
+        $this->assertSame('secret', $requests[0]['headers']['x-migrator-token']);
+    }
+
+    public function test404IsReportedWithoutARetry(): void
+    {
+        self::writeFile($this->siteDir . '.htaccess', 'RewriteEngine On');
+        $this->saveMigration(['destination_url' => $this->destination->url(), 'token' => 'secret']);
+        $this->destination->respondWith('/wp-json/', 404, 'not found');
+
+        try {
+            (new HtaccessService())->transfer('mig_1');
+            $this->fail('Expected destination error');
+        } catch (Exception $exception) {
+            $this->assertSame('Destination returned error 404: not found', $exception->getMessage());
+        }
+
+        $this->assertCount(1, $this->destination->requests());
     }
 
     public function testManualIpThatIsNotOneValidIpIsRefusedBeforeAnyRequest(): void
@@ -176,7 +190,7 @@ final class HtaccessServiceTest extends TestCase
         try {
             (new HtaccessService())->transfer('mig_1');
             $this->fail('Expected the destination to be refused');
-        } catch (\WordpressMigrator\Helpers\DestinationNotAllowedException $exception) {
+        } catch (\PanelAlpha\Migrator\Helpers\DestinationNotAllowedException $exception) {
             $this->assertSame([], $this->destination->requests());
         }
     }

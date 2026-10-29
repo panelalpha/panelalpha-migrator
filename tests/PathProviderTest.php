@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
 
 /**
  * Outside WordPress, where none of the plugin constants are defined.

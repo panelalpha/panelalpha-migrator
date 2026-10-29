@@ -1,9 +1,9 @@
 /**
- * WordPress Migrator - Admin Styles
+ * PanelAlpha Migrator - Admin Styles
  */
 
 /* Container */
-.wp-migrator-admin {
+.panelalpha-migrator-admin {
     max-width: 1200px;
 }
 
@@ -85,16 +85,16 @@
     cursor: default;
 }
 
-.wp-migrator-container {
+.panelalpha-migrator-container {
     margin-top: 20px;
 }
 
 /* Sections */
-.wp-migrator-section {
+.panelalpha-migrator-section {
     margin-bottom: 30px;
 }
 
-.wp-migrator-section h2 {
+.panelalpha-migrator-section h2 {
     margin-bottom: 15px;
     font-size: 18px;
     font-weight: 600;
@@ -152,7 +152,7 @@
 }
 
 /* Cards */
-.wp-migrator-card {
+.panelalpha-migrator-card {
     background: #fff;
     border: 1px solid #c3c4c7;
     border-radius: 4px;
@@ -161,7 +161,7 @@
 }
 
 /* Form */
-.wp-migrator-form {
+.panelalpha-migrator-form {
     max-width: 600px;
 }
 
@@ -282,7 +282,7 @@
 }
 
 /* Progress */
-.wp-migrator-progress {
+.panelalpha-migrator-progress {
     padding: 20px 0;
 }
 
@@ -429,7 +429,7 @@
 }
 
 /* Tabs */
-.wp-migrator-tabs {
+.panelalpha-migrator-tabs {
     margin: 0;
 }
 
@@ -601,7 +601,7 @@
     }
 }
 
-.wp-migrator-section {
+.panelalpha-migrator-section {
     animation: fadeIn 0.3s ease;
 }
 
@@ -674,7 +674,7 @@
 }
 
 /* Token section description */
-.wp-migrator-section .description {
+.panelalpha-migrator-section .description {
     margin-bottom: 20px;
     line-height: 1.6;
 }

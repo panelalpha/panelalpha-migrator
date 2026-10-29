@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with WordPress Migrator. This page covers how to set up the code, run the tests and send a change.
+Thanks for helping with PanelAlpha Migrator. This page covers how to set up the code, run the tests and send a change.
 
 Questions go to [Discord](https://discord.gg/9twHWR7xGX) or the [forums](https://community.panelalpha.com/). Report a security issue privately through [PanelAlpha](https://manage.panelalpha.com/contact), not in a public issue.
 
@@ -9,12 +9,12 @@ Questions go to [Discord](https://discord.gg/9twHWR7xGX) or the [forums](https:/
 You need PHP 7.4 or newer and [Composer](https://getcomposer.org/).
 
 ```bash
-git clone https://github.com/panelalpha/panelalpha-wordpress-migrator.git wordpress-migrator
-cd wordpress-migrator
+git clone https://github.com/panelalpha/panelalpha-wordpress-migrator.git panelalpha-migrator
+cd panelalpha-migrator
 composer install
 ```
 
-Name the folder `wordpress-migrator`. The source sends to that exact path on the destination, so a test site needs the plugin under `wp-content/plugins/wordpress-migrator/`.
+Name the folder `panelalpha-migrator`. The source sends to that exact path on the destination, so a test site needs the plugin under `wp-content/plugins/panelalpha-migrator/`.
 
 ## Run the tests
 
@@ -52,8 +52,8 @@ The release zip is built by `.github/workflows/release-package.yml` when a relea
 
 ```bash
 composer install --no-dev --optimize-autoloader
-zip -r wordpress-migrator.zip \
-  wordpress-migrator.php config.php migrate.php restore.php composer.json composer.lock \
+zip -r panelalpha-migrator.zip \
+  panelalpha-migrator.php uninstall.php readme.txt composer.json composer.lock \
   assets src templates vendor
 ```
 
@@ -63,7 +63,7 @@ zip -r wordpress-migrator.zip \
 - Write commits as [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`.
 - Add a unit test in `tests/` for new behaviour.
 - Update [`docs/`](docs/README.md) where a user would notice the change.
-- Change the version in `wordpress-migrator.php` (both the header and `WP_MIGRATOR_VERSION`) only for a release. The release tag must match it.
+- Change the version in `panelalpha-migrator.php` (both the header and `PANELALPHA_MIGRATOR_VERSION`) only for a release. The release tag must match it.
 - Update `composer.lock` when you change `composer.json`.
 
 By sending a change you agree that it is licensed under GPL v2 or later, like the rest of the plugin. See [LICENSE](LICENSE).

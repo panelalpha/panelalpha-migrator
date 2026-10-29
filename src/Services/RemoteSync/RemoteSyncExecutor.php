@@ -1,14 +1,14 @@
 <?php
 
-namespace WordpressMigrator\Services\RemoteSync;
+namespace PanelAlpha\Migrator\Services\RemoteSync;
 
 use Exception;
-use WordpressMigrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
 
 /**
  * Executes the full remote sync backup process.
  *
- * @package WordpressMigrator\Services\RemoteSync
+ * @package PanelAlpha\Migrator\Services\RemoteSync
  */
 class RemoteSyncExecutor
 {

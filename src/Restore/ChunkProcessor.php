@@ -1,15 +1,15 @@
 <?php
 
-namespace WordpressMigrator\Restore;
+namespace PanelAlpha\Migrator\Restore;
 
-use WordpressMigrator\Services\Backup\ChunkService;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Services\Backup\ChunkService;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
 
 /**
  * Class ChunkProcessor
  *
- * @package WordpressMigrator\Restore
+ * @package PanelAlpha\Migrator\Restore
  *
  * Processes received chunks during the restore process.
  */
@@ -58,11 +58,8 @@ class ChunkProcessor
             case 'file_chunk':
                 return $this->fileHandler->restoreChunk($chunkData);
 
-            case 'migration_complete':
-                return $this->processComplete($migrationId, $chunkData);
-
             default:
-                throw new \Exception('Unknown chunk type: ' . $type);
+                throw new \Exception(esc_html('Unknown chunk type: ' . $type));
         }
     }
 
@@ -84,46 +81,4 @@ class ChunkProcessor
 
         return ['action' => 'registered_migration'];
     }
-
-    /**
-     * Processes the 'migration_complete' chunk.
-     *
-     * @param string $migrationId
-     * @param array  $chunkData
-     * @return array
-     */
-    private function processComplete(string $migrationId, array $chunkData): array
-    {
-        $registry = new MigrationRegistry($migrationId);
-        $skippedFiles = $registry->knownSkippedFiles($registry->getStatus() ?? [], $chunkData['skipped_files'] ?? []);
-
-        if (!$registry->isRestoreComplete($skippedFiles)) {
-            throw new \Exception('Migration manifest is incomplete');
-        }
-
-        // Domain replacement is no longer needed here - domains are replaced
-        // before sending chunks from source WordPress
-        error_log("MIGRATION COMPLETE: Migration {$migrationId} completed. Domain replacement was handled during chunk creation.");
-
-        $removed = $this->fileHandler->removeStaleCoreFiles(array_keys(($registry->getStatus() ?? [])['files'] ?? []));
-        if ($removed > 0) {
-            error_log("MIGRATION COMPLETE: Migration {$migrationId} deleted {$removed} WordPress core files the source does not have.");
-        }
-
-        $registry->updateStatus('restored');
-
-        $result = [
-            'action' => 'migration_completed',
-            'message' => 'Migration completed successfully. Domains were replaced during transfer.'
-        ];
-
-        if ($skippedFiles !== []) {
-            error_log("MIGRATION COMPLETE: Migration {$migrationId} skipped files deleted on the source: " . implode(', ', $skippedFiles));
-            $result['skipped_files'] = $skippedFiles;
-            $result['warning'] = 'Some files were deleted on the source before they could be sent and were skipped.';
-        }
-
-        return $result;
-    }
-
 }

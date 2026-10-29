@@ -1,6 +1,6 @@
 <div align="center">
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/panelalpha-wordpress-migrator.svg"><img src="docs/assets/panelalpha-wordpress-migrator-light.svg" alt="PanelAlpha WordPress Migrator" width="360"></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/panelalpha-migrator.svg"><img src="docs/assets/panelalpha-migrator-light.svg" alt="PanelAlpha Migrator" width="360"></picture></p>
 
 <h1>Move a WordPress site.<br>Files, database and all.</h1>
 
@@ -20,7 +20,7 @@ One plugin on both sites. One address to paste. No FTP, no SQL dump.
 </p>
 
 <p>
-<img src="https://img.shields.io/badge/version-1.2.0-2f8f46" alt="Version 1.2.0">
+<img src="https://img.shields.io/badge/version-1.2.1-2f8f46" alt="Version 1.2.1">
 <a href="#before-you-start"><img src="https://img.shields.io/badge/WordPress-plugin-21759b?logo=wordpress&logoColor=white" alt="WordPress plugin"></a>
 <a href="#before-you-start"><img src="https://img.shields.io/badge/PHP-7.4%2B-777bb4?logo=php&logoColor=white" alt="PHP 7.4 or newer"></a>
 <a href="docs/03-api/migrate-over-the-api.md"><img src="https://img.shields.io/badge/REST_API-remote--sync-6f42c1" alt="REST API"></a>
@@ -29,9 +29,9 @@ One plugin on both sites. One address to paste. No FTP, no SQL dump.
 
 </div>
 
-## What is WordPress Migrator?
+## What is PanelAlpha Migrator?
 
-WordPress Migrator is a WordPress plugin that copies a whole site, its files and its database, from the server it runs on now to another WordPress installation, usually a new site on a PanelAlpha server. You install it on both sites, copy one address from the new site, paste it into the old one, and start. PanelAlpha uses the same plugin to run migrations for you, without a browser.
+PanelAlpha Migrator is a WordPress plugin that copies a whole site, its files and its database, from the server it runs on now to another WordPress installation, usually a new site on a PanelAlpha server. You install it on both sites, copy one address from the new site, paste it into the old one, and start. PanelAlpha uses the same plugin to run migrations for you, without a browser.
 
 ```mermaid
 graph LR;
@@ -49,14 +49,14 @@ graph LR;
 ### Before you start
 
 - Two WordPress sites: the **source** you are moving, and the **destination** it moves to. The destination can be a fresh, empty install.
-- An administrator login on both, and PHP 7.4 or newer with the cURL and PDO MySQL extensions.
-- WordPress must be able to write to `wp-content` on both sites, and to the plugin's `config.php` on the destination.
+- An administrator login on both, and PHP 7.4 or newer with the cURL extension.
+- WordPress must be able to write to `wp-content` on both sites.
 
 > **The migration replaces the destination site.** Each table the source has is deleted on the destination and recreated from the source, and files with the same path are overwritten. Afterwards you log in to the destination with the source site's usernames and passwords.
 
 ### Step 1: Install the plugin on both sites
 
-Download `wordpress-migrator.zip` from the [latest release](https://github.com/panelalpha/panelalpha-wordpress-migrator/releases/latest). In WordPress, open **Plugins** > **Add New Plugin** > **Upload Plugin**, upload the zip, then select **Activate** under **WordPress Migrator**. A **Migrator** item appears in the dashboard menu. [Install the plugin](docs/01-getting-started/install.md)
+Download `panelalpha-migrator.zip` from the [latest release](https://github.com/panelalpha/panelalpha-wordpress-migrator/releases/latest). In WordPress, open **Plugins** > **Add New Plugin** > **Upload Plugin**, upload the zip, then select **Activate** under **PanelAlpha Migrator**. A **Migrator** item appears in the dashboard menu. [Install the plugin](docs/01-getting-started/install.md)
 
 > **Use the release zip, not the source code.** The zip includes the `vendor` folder. A copy of the repository does not, and without `vendor` the plugin activates but shows no **Migrator** menu. To install from the repository anyway, run `composer install --no-dev` in the plugin folder first.
 
@@ -85,7 +85,7 @@ Then open the destination and check it: [Check the result](docs/01-getting-start
 |:---|:---|
 | Every table in the source database | `wp-config.php`, with the destination's database login |
 | Every file in the site folder, with permissions and dates | `.htaccess` in the site folder, with the destination's server rules |
-| Hidden files, such as `.user.ini` | The migrator plugin and its token |
+| Hidden files, such as `.user.ini` | The migrator plugin, with its own token and settings |
 | Your uploads, themes and plugins | Tables that exist only on the destination |
 
 `node_modules`, `.git` and `.svn` folders are always left out. Leave out more, such as `*.log` or a cache folder, under **Advanced Options**. [What gets moved](docs/02-guides/what-gets-moved.md)
@@ -135,7 +135,7 @@ The dashboard never copies the main `.htaccess`, so the destination keeps its ow
 <details>
 <summary><b>Should I keep the plugin installed afterwards?</b></summary>
 
-No. While it is active, the destination accepts writes from anyone with its address and token. Deactivate and delete it on both sites once you are happy with the result. [Remove the plugin](docs/01-getting-started/after-the-migration.md#remove-the-plugin)
+No. While it is active, the destination accepts writes from anyone with its address and token. Deactivate and delete it on both sites once you are happy with the result. Deleting it from the dashboard also removes its settings, token and temporary files. [Remove the plugin](docs/01-getting-started/after-the-migration.md#remove-the-plugin)
 </details>
 
 ## Documentation
@@ -149,4 +149,4 @@ No. While it is active, the destination accepts writes from anyone with its addr
 
 ## License
 
-WordPress Migrator is licensed under GPL v2 or later. See [LICENSE](LICENSE).
+PanelAlpha Migrator is licensed under GPL v2 or later. See [LICENSE](LICENSE).

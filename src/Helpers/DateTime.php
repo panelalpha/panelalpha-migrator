@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class DateTime
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Handles date and time operations.
  */

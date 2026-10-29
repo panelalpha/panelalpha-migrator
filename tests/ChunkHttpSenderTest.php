@@ -2,14 +2,15 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Services\Backup\ChunkHttpSender;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
-use WordpressMigrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Backup\ChunkHttpSender;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
 
 final class ChunkHttpSenderTest extends TestCase
 {
@@ -26,9 +27,9 @@ final class ChunkHttpSenderTest extends TestCase
         $this->destination = FakeDestination::get();
     }
 
-    public function testChunkIsPostedAsCompressedJsonToRestorePhp(): void
+    public function testChunkIsPostedAsCompressedJsonToTheReceiveRoute(): void
     {
-        $this->destination->respondWith('restore.php', 200, '{"success":true,"processed":true,"migration_id":"mig_1"}');
+        $this->destination->respondWith('/v1/receive', 200, '{"success":true,"processed":true,"migration_id":"mig_1"}');
         $sender = new ChunkHttpSender($this->destination->url(), 'secret-token');
         CurlOptionCapture::reset();
 
@@ -36,7 +37,7 @@ final class ChunkHttpSenderTest extends TestCase
 
         $this->assertSame(['success' => true, 'processed' => true, 'migration_id' => 'mig_1'], $result);
         $request = $this->destination->requests()[0];
-        $this->assertSame('/wp-content/plugins/wordpress-migrator/restore.php?action=collect-and-restore', $request['uri']);
+        $this->assertSame('/wp-json/panelalpha-migrator/v1/receive', $request['uri']);
         $this->assertSame('application/json', $request['headers']['content-type']);
         $this->assertSame('secret-token', $request['headers']['x-migrator-token']);
         $this->assertArrayNotHasKey('x-migrator-encoding', $request['headers']);
@@ -64,7 +65,16 @@ final class ChunkHttpSenderTest extends TestCase
 
         $sender->send($this->chunk);
 
-        $this->assertStringStartsWith('/wp-content/', $this->destination->requests()[0]['uri']);
+        $this->assertSame('/wp-json/panelalpha-migrator/v1/receive', $this->destination->requests()[0]['uri']);
+    }
+
+    public function testPlainRestModePostsToTheRestRouteQuery(): void
+    {
+        $sender = new ChunkHttpSender($this->destination->url(), 'secret-token', null, false, [], DestinationEndpoint::MODE_PLAIN);
+
+        $sender->send($this->chunk);
+
+        $this->assertSame('/?rest_route=/panelalpha-migrator/v1/receive', $this->destination->requests()[0]['uri']);
     }
 
     public function testBase64ModeEncodesTheBody(): void
@@ -107,18 +117,18 @@ final class ChunkHttpSenderTest extends TestCase
 
     public function testErrorStatusFromTheDestinationThrows(): void
     {
-        $this->destination->respondWith('restore.php', 403, '{"error":"Unauthorized - invalid token"}');
+        $this->destination->respondWith('/v1/receive', 403, '{"error":"Unauthorized - invalid token"}');
         $sender = new ChunkHttpSender($this->destination->url(), 'wrong');
 
         $this->expectException(Exception::class);
-        $this->expectExceptionMessage('Destination returned error: 403 - {"error":"Unauthorized - invalid token"}');
+        $this->expectExceptionMessage('Destination returned error: 403 - {&quot;error&quot;:&quot;Unauthorized - invalid token&quot;}');
 
         $sender->send($this->chunk);
     }
 
     public function testLongErrorBodyIsCutInTheMessage(): void
     {
-        $this->destination->respondWith('restore.php', 500, str_repeat('y', 1000));
+        $this->destination->respondWith('/v1/receive', 500, str_repeat('y', 1000));
         $sender = new ChunkHttpSender($this->destination->url(), 'secret-token');
 
         $this->expectException(Exception::class);
@@ -145,7 +155,7 @@ final class ChunkHttpSenderTest extends TestCase
     public function testAcknowledgementMustMatchTheMigrationAndChunk(): void
     {
         $this->chunk['chunk_id'] = 'file_chunk_00001';
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_other',
             'chunk_id' => 'file_chunk_00001',
@@ -161,7 +171,7 @@ final class ChunkHttpSenderTest extends TestCase
     public function testAcknowledgementRejectsAChunkIdThatDoesNotMatch(): void
     {
         $this->chunk['chunk_id'] = 'file_chunk_00001';
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_1',
             'chunk_id' => 'file_chunk_00002',
@@ -177,7 +187,7 @@ final class ChunkHttpSenderTest extends TestCase
     public function testRetryableOrFailedAcknowledgementIsNotDelivered(): void
     {
         $this->chunk['chunk_id'] = 'file_chunk_00001';
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_1',
             'chunk_id' => 'file_chunk_00001',
@@ -194,7 +204,7 @@ final class ChunkHttpSenderTest extends TestCase
     public function testExplicitSkipWithAReasonIsAcknowledged(): void
     {
         $this->chunk['chunk_id'] = 'file_chunk_00001';
-        $this->destination->respondWith('restore.php', 200, json_encode([
+        $this->destination->respondWith('/v1/receive', 200, json_encode([
             'success' => true,
             'migration_id' => 'mig_1',
             'chunk_id' => 'file_chunk_00001',

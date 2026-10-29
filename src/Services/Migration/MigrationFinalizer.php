@@ -1,20 +1,20 @@
 <?php
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\DateTime;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DateTime;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
 
 /**
  * Class MigrationFinalizer
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Handles the finalization of a migration.
  */
@@ -22,15 +22,21 @@ class MigrationFinalizer
 {
     private $migrationFilePath;
     private $migrationData;
+    private int $attempts;
+    private int $pauseMicroseconds;
 
     /**
      * MigrationFinalizer constructor.
      *
      * @param string $migrationId
+     * @param int    $attempts          How many times finalize is asked while the destination answers it is still working
+     * @param int    $pauseMicroseconds Pause between those attempts
      * @throws \Exception
      */
-    public function __construct($migrationId)
+    public function __construct($migrationId, int $attempts = 10, int $pauseMicroseconds = 1000000)
     {
+        $this->attempts = max(1, $attempts);
+        $this->pauseMicroseconds = max(0, $pauseMicroseconds);
         $this->migrationFilePath = PathProvider::getMigrationFilePath($migrationId);
         $this->loadMigrationData();
         $this->migrationData = array_merge($this->migrationData, (new MigrationStorageService())->loadSecrets($migrationId));
@@ -54,6 +60,8 @@ class MigrationFinalizer
 
     /**
      * Send migration complete signal to destination.
+     * While the destination answers that it is still finishing, finalize is asked again a few
+     * times. A result with finalized false means it is still working after the last attempt.
      *
      * @return array Response from destination
      * @throws \Exception
@@ -79,12 +87,32 @@ class MigrationFinalizer
 
         $response = $this->sendToDestination($completionData);
 
+        for ($attempt = 1; $attempt < $this->attempts && $this->isStillFinishing($response); $attempt++) {
+            usleep($this->pauseMicroseconds);
+            $response = $this->sendToDestination($completionData);
+        }
+
+        if ($this->isStillFinishing($response)) {
+            return $response;
+        }
+
         if (is_array($response) && $completionData['skipped_files'] !== []) {
             $response['skipped_files'] = $completionData['skipped_files'];
             $response['warning'] = 'Some files were deleted on the source before they could be sent and were skipped.';
         }
 
         return $response;
+    }
+
+    /**
+     * The destination confirmed the request but has not finished the migration yet.
+     *
+     * @param mixed $response
+     * @return bool
+     */
+    private function isStillFinishing($response): bool
+    {
+        return is_array($response) && !empty($response['success']) && ($response['finalized'] ?? true) === false;
     }
 
     /**
@@ -219,14 +247,10 @@ class MigrationFinalizer
             ?? null;
 
         if (empty($destinationUrl)) {
-            error_log("FINALIZER ERROR: Destination URL not found. Keys: " . json_encode(array_keys($this->migrationData)));
             throw new \Exception('Destination URL is not defined.');
         }
 
-        $endpoint = Filesystem::trailingSlashIt($destinationUrl) . 'wp-json/wp-migrator/v1/collect-chunk';
-        $endpointRestRoute = rtrim($destinationUrl, '/');
-        $endpointRestRoute .= (strpos($endpointRestRoute, '?') !== false) ? '&' : '/?';
-        $endpointRestRoute .= 'rest_route=/wp-migrator/v1/collect-chunk';
+        $endpoint = (new DestinationEndpoint($destinationUrl, DestinationEndpoint::modeFrom($this->migrationData)))->url('receive/finalize');
 
         $ip = $this->migrationData['ip'] ?? null;
         $token = TokenHelper::forMigration($this->migrationData);
@@ -241,7 +265,7 @@ class MigrationFinalizer
         $httpArgs = [
             'headers' => $headers,
             'body' => json_encode($completionData),
-            'timeout' => 60,
+            'timeout' => 120,
         ];
 
         $pinned = $this->migrationData['pinned_ip'] ?? null;
@@ -257,19 +281,16 @@ class MigrationFinalizer
 
         $response = $this->postCompletion($endpoint, $httpArgs);
         $decoded = $this->decodeConfirmation($response);
-
-        // Some servers do not route /wp-json/* when permalinks are not configured and answer
-        // with the home page or a 404. Fall back to the non-pretty REST route.
-        if ($decoded === null && $this->shouldTryRestRoute($response)) {
-            $response = $this->postCompletion($endpointRestRoute, $httpArgs);
-            $decoded = $this->decodeConfirmation($response);
-        }
-
         $statusCode = Http::retrieveResponseCode($response);
 
         if ($statusCode < 200 || $statusCode >= 300) {
             $body = Http::retrieveBody($response);
-            throw new \Exception('Destination returned error: ' . $statusCode . ' - ' . substr((string) $body, 0, 300));
+            throw new \Exception(esc_html('Destination returned error: ' . $statusCode . ' - ' . substr((string) $body, 0, 300)));
+        }
+
+        // 202 means the destination is still finishing, even without a finalized field.
+        if ($statusCode === 202 && is_array($decoded) && !array_key_exists('finalized', $decoded)) {
+            $decoded['finalized'] = false;
         }
 
         return $decoded ?? json_decode((string) Http::retrieveBody($response), true);
@@ -280,7 +301,7 @@ class MigrationFinalizer
      *
      * @param string $endpoint
      * @param array  $httpArgs
-     * @return \WordpressMigrator\Helpers\HttpResponse
+     * @return \PanelAlpha\Migrator\Helpers\HttpResponse
      * @throws \Exception
      */
     private function postCompletion(string $endpoint, array $httpArgs)
@@ -288,31 +309,16 @@ class MigrationFinalizer
         $response = Http::post($endpoint, $httpArgs);
 
         if (Http::isError($response)) {
-            throw new \Exception('Failed to send completion signal: ' . $response->getErrorMessage());
+            throw new \Exception(esc_html('Failed to send completion signal: ' . $response->getErrorMessage()));
         }
 
         return $response;
     }
 
     /**
-     * A 404 or a 2xx answer that is not a confirmation means the route was not served by the plugin.
-     *
-     * @param \WordpressMigrator\Helpers\HttpResponse $response
-     * @return bool
-     */
-    private function shouldTryRestRoute($response): bool
-    {
-        $statusCode = Http::retrieveResponseCode($response);
-
-        return $statusCode === 404 || ($statusCode >= 200 && $statusCode < 300);
-    }
-
-    /**
      * Returns the decoded answer when it is a confirmation, otherwise null.
-     * A destination before 1.2.0 acknowledges with status received and processed true
-     * and has no success field, which counts as a confirmation.
      *
-     * @param \WordpressMigrator\Helpers\HttpResponse $response
+     * @param \PanelAlpha\Migrator\Helpers\HttpResponse $response
      * @return array|null
      */
     private function decodeConfirmation($response): ?array
@@ -323,27 +329,8 @@ class MigrationFinalizer
         }
 
         $decoded = json_decode((string) Http::retrieveBody($response), true);
-        if (!is_array($decoded)) {
-            return null;
-        }
 
-        if (!empty($decoded['success'])) {
-            return $decoded;
-        }
-
-        $legacy = !array_key_exists('success', $decoded)
-            && ($decoded['type'] ?? null) === 'acknowledgment'
-            && ($decoded['status'] ?? null) === 'received'
-            && ($decoded['processed'] ?? null) === true
-            && ($decoded['migration_id'] ?? null) === ($this->migrationData['migrationId'] ?? null);
-
-        if ($legacy) {
-            $decoded['success'] = true;
-
-            return $decoded;
-        }
-
-        return null;
+        return is_array($decoded) && !empty($decoded['success']) ? $decoded : null;
     }
 
     /**

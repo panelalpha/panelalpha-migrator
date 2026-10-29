@@ -27,8 +27,9 @@ This is not the same as the warning **Some files were deleted on the source befo
 
 The destination accepts writes from anyone who has its address and token for as long as the plugin is active. When you are satisfied with the result:
 
-1. On both sites, open **Plugins**, select **Deactivate** under **WordPress Migrator**, then **Delete**.
-2. On both sites, delete the `wp-content/migrations/` folder. It holds the working files of the migration, and on the source a list of every file and table that was sent.
+1. On both sites, open **Plugins**, select **Deactivate** under **PanelAlpha Migrator**, then **Delete**.
+
+Deleting the plugin from the dashboard also removes its token, its settings, its temporary tables and its files in `wp-content/migrations/`. That folder held the working files of the migration, and on the source a list of every file and table that was sent. The folder itself is removed only when it is empty, so delete it by hand if something else is left in it.
 
 To migrate again later, install the plugin again and create a new token.
 

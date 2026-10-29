@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class FilesystemTest extends TestCase
 {

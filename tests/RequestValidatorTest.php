@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\Middleware\RequestValidator;
+use PanelAlpha\Migrator\Api\Middleware\RequestValidator;
 
 final class RequestValidatorTest extends TestCase
 {

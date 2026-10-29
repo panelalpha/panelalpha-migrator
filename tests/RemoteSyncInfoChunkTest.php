@@ -2,22 +2,22 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\Migration\MigrationService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncExecutor;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncExecutor;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncOrchestrationService;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class RemoteSyncInfoChunkTest extends TestCase
 {
@@ -118,7 +118,7 @@ final class RemoteSyncInfoChunkTest extends TestCase
         $this->saveMigration();
         $this->backupStatus(['status' => 'in_progress'], null);
         $service = $this->service();
-        $this->destination->respondWith('restore.php', 500, '{}');
+        $this->destination->respondWith('/v1/receive', 500, '{}');
 
         try {
             $service->processBatch(self::ID);

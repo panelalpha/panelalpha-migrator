@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class BinarySafeEncoder
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Handles encoding/decoding of non-UTF8 values in database row data
  * to allow safe JSON serialization during migration.

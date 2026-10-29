@@ -2,19 +2,20 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Helpers\DateTime;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Helpers\DateTime;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
 
 /**
  * Class FileBackupService
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Service for handling file backup operations.
  */
@@ -71,7 +72,7 @@ class FileBackupService
         $ip = $this->migrationData['pinned_ip'] ?? null;
         $base64 = $this->migrationData['base64'] ?? false;
 
-        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData));
+        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData), DestinationEndpoint::modeFrom($this->migrationData));
     }
 
     /**
@@ -164,7 +165,7 @@ class FileBackupService
         $handle = $this->openFile($fullPath, $filePath);
         $content = $this->extractChunkContent($handle, $offset, $size, $filePath);
 
-        fclose($handle);
+        fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- reads one byte range of a large file, which WP_Filesystem cannot do
 
         return $content;
 
@@ -180,7 +181,7 @@ class FileBackupService
     private function validateFileExists(string $fullPath, string $filePath): void
     {
         if (!file_exists($fullPath)) {
-            throw new \Exception('File not found: ' . $filePath);
+            throw new \Exception(esc_html('File not found: ' . $filePath));
         }
     }
 
@@ -194,10 +195,10 @@ class FileBackupService
      */
     private function openFile(string $fullPath, string $filePath)
     {
-        $handle = fopen($fullPath, 'rb');
+        $handle = fopen($fullPath, 'rb'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- reads one byte range of a large file, which WP_Filesystem cannot do
 
         if (!$handle) {
-            throw new \Exception('Cannot open file: ' . $filePath);
+            throw new \Exception(esc_html('Cannot open file: ' . $filePath));
         }
 
         return $handle;
@@ -220,10 +221,10 @@ class FileBackupService
         }
 
         fseek($handle, $offset);
-        $content = fread($handle, $size);
+        $content = fread($handle, $size); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread -- reads one byte range of a large file, which WP_Filesystem cannot do
 
         if ($content === false) {
-            throw new \Exception('Cannot read file: ' . $filePath);
+            throw new \Exception(esc_html('Cannot read file: ' . $filePath));
         }
 
         return $content;

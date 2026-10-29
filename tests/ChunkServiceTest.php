@@ -2,18 +2,16 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Services\Backup\ChunkService;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Backup\ChunkService;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class ChunkServiceTest extends TestCase
 {
@@ -28,15 +26,7 @@ final class ChunkServiceTest extends TestCase
     {
         $this->migrationDir = $this->createTemporaryDirectory();
         Config::set('migration_dir', $this->migrationDir);
-        FakeDatabase::install();
         $this->service = new ChunkService();
-    }
-
-    public function testChunkDataNeedsAType(): void
-    {
-        $this->assertTrue($this->service->isValidChunkData(['type' => 'info']));
-        $this->assertFalse($this->service->isValidChunkData([]));
-        $this->assertFalse($this->service->isValidChunkData(['migration_id' => 'mig_1']));
     }
 
     public static function chunkFileNames(): array
@@ -131,32 +121,6 @@ final class ChunkServiceTest extends TestCase
         $this->assertFileExists($old);
         $this->assertNotSame('table_chunk_00001.json', $newFile);
         $this->assertFileExists($directory . $newFile);
-    }
-
-    public function testInfoChunkRegistersTheMigration(): void
-    {
-        $this->service->saveChunk('mig_1', ['type' => 'info']);
-
-        $this->service->registerChunk('mig_1', [
-            'type' => 'info',
-            'files' => [['path' => 'a.txt', 'total_chunks' => 1]],
-        ]);
-
-        $status = (new MigrationRegistry('mig_1'))->getStatus();
-        $this->assertSame('collecting', $status['status']);
-        $this->assertArrayHasKey('a.txt', $status['files']);
-    }
-
-    public function testOtherChunkIsMarkedReceived(): void
-    {
-        $this->service->saveChunk('mig_1', ['type' => 'info']);
-        $this->service->registerChunk('mig_1', ['type' => 'info', 'files' => [['path' => 'a.txt', 'total_chunks' => 1]]]);
-
-        $this->service->registerChunk('mig_1', ['type' => 'file_chunk', 'file' => ['path' => 'a.txt']]);
-
-        $status = (new MigrationRegistry('mig_1'))->getStatus();
-        $this->assertSame(1, $status['chunks_received']);
-        $this->assertSame('received', $status['files']['a.txt']['status']);
     }
 
     public static function unsafeMigrationIds(): array

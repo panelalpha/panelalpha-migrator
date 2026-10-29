@@ -2,23 +2,26 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\After;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\Migration\MigrationService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncExecutor;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshake;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshakeException;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncExecutor;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncOrchestrationService;
+use PanelAlpha\Migrator\Tests\Support\RecordingWpdb;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class RemoteSyncOrchestrationServiceTest extends TestCase
 {
@@ -43,6 +46,10 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
 
     private MockObject $storage;
 
+    /** @var DestinationHandshake&MockObject */
+
+    private MockObject $handshake;
+
     protected function setUp(): void
     {
         $this->storage = $this->createMock(MigrationStorageService::class);
@@ -50,6 +57,8 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->migrationService = $this->createMock(MigrationService::class);
         $this->backupService = $this->createMock(BackupService::class);
         $this->executor = $this->createMock(RemoteSyncExecutor::class);
+        $this->handshake = $this->createMock(DestinationHandshake::class);
+        $this->handshake->method('check')->willReturn('pretty');
     }
 
     /**
@@ -74,7 +83,8 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
             $this->executor,
             $lock ?? $this->lock(),
             new DestinationGuard(static fn (string $host): array => ['8.8.8.8']),
-            $this->storage
+            $this->storage,
+            $this->handshake
         );
     }
 
@@ -313,6 +323,8 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
     {
         $expected = implode("\n", [
             'wp-config.php',
+            'panelalpha-migrator',
+            'wp-content/plugins/panelalpha-migrator',
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',
             'foo.txt',
@@ -333,6 +345,8 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
     {
         $expected = implode("\n", [
             'wp-config.php',
+            'panelalpha-migrator',
+            'wp-content/plugins/panelalpha-migrator',
             'wordpress-migrator',
             'wp-content/plugins/wordpress-migrator',
         ]);
@@ -442,11 +456,11 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $result = $this->service()->startMigration($this->validOptions());
 
         $this->assertSame(
-            'https://panel.example.com/wp-json/wp-migrator/v1/remote-sync/status/mig_1',
+            'https://panel.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_1',
             $result['status_url']
         );
         $this->assertSame(
-            'https://panel.example.com/wp-json/wp-migrator/v1/remote-sync/process-batch',
+            'https://panel.example.com/wp-json/panelalpha-migrator/v1/remote-sync/process-batch',
             $result['process_batch_url']
         );
     }
@@ -460,11 +474,11 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $result = $this->service()->startMigration($this->validOptions());
 
         $this->assertSame(
-            'https://shop.example.com/wp-json/wp-migrator/v1/remote-sync/status/mig_1',
+            'https://shop.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_1',
             $result['status_url']
         );
         $this->assertSame(
-            'https://shop.example.com/wp-json/wp-migrator/v1/remote-sync/process-batch',
+            'https://shop.example.com/wp-json/panelalpha-migrator/v1/remote-sync/process-batch',
             $result['process_batch_url']
         );
     }
@@ -478,7 +492,7 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $result = $this->service()->startMigration($this->validOptions());
 
         $this->assertSame(
-            'http://shop.example.com/wp-json/wp-migrator/v1/remote-sync/status/mig_1',
+            'http://shop.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_1',
             $result['status_url']
         );
     }
@@ -501,15 +515,10 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         );
     }
 
-    public function testTablePrefixIsReadFromWpConfigUnderRootPath(): void
+    public function testTablePrefixIsTheOneOfTheSourceDatabase(): void
     {
-        $root = $this->createTemporaryDirectory();
-        file_put_contents($root . 'wp-config.php', "<?php\n" .
-            "define('DB_NAME', 'db');\n" .
-            "define('DB_USER', 'user');\n" .
-            "define('DB_HOST', 'localhost');\n" .
-            "\$table_prefix = 'custom_';\n");
-        Config::set('root_path', $root);
+        $GLOBALS['wpdb'] = new RecordingWpdb();
+        $GLOBALS['wpdb']->base_prefix = 'custom_';
         $this->migrationService->method('scanAndPrepareMigration')->willReturn(['migrationId' => 'mig_1']);
 
         $result = $this->service()->startMigration($this->validOptions());
@@ -907,6 +916,119 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $second = $service->processBatch('mig_1');
 
         $this->assertTrue($first['finalized']);
+        $this->assertTrue($second['finalized']);
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testDestinationIsCheckedBeforeTheScanAndTheRestModeIsSaved(): void
+    {
+        $handshake = $this->createMock(DestinationHandshake::class);
+        $handshake->expects($this->once())->method('check')->with([
+            'destinationUrl' => 'https://dest.example.com/mig',
+            'token' => self::TOKEN,
+            'ip' => null,
+            'pinned_ip' => '8.8.8.8',
+            'insecure_tls' => false,
+        ])->willReturn('plain');
+        $this->migrationService->expects($this->once())
+            ->method('scanAndPrepareMigration')
+            ->with(
+                'https://dest.example.com/mig',
+                $this->anything(),
+                self::TOKEN,
+                null,
+                false,
+                true,
+                true,
+                '8.8.8.8',
+                false,
+                'plain'
+            )
+            ->willReturn(['migrationId' => 'mig_1']);
+        $this->handshake = $handshake;
+
+        $this->service()->startMigration($this->validOptions());
+    }
+
+    public function testIncompatibleDestinationStopsBeforeTheScanAndTakesNoLock(): void
+    {
+        $handshake = $this->createMock(DestinationHandshake::class);
+        $handshake->method('check')->willThrowException(
+            new DestinationHandshakeException('destination_incompatible', 'Destination does not have PanelAlpha Migrator 1.2.1 or newer active.')
+        );
+        $this->handshake = $handshake;
+        $this->migrationService->expects($this->never())->method('scanAndPrepareMigration');
+        $lock = $this->lock();
+
+        try {
+            $this->service($lock)->startMigration($this->validOptions());
+            $this->fail('An incompatible destination must stop the start');
+        } catch (DestinationHandshakeException $exception) {
+            $this->assertSame('destination_incompatible', $exception->getErrorCode());
+        }
+
+        $this->assertFalse($lock->isLocked());
+    }
+
+    public function testDestinationStillFinishingKeepsTheLockAndAnswersNotFinalized(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'completed'],
+            'files' => ['status' => 'completed'],
+        ]);
+        $this->migrationService->method('finalizeMigration')
+            ->willReturn(['success' => true, 'finalized' => false, 'phase' => 'finalizing']);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertFalse($result['finalized']);
+        $this->assertSame('completed', $result['phase']);
+        $this->assertSame('Destination is still finishing the migration. Call process-batch again.', $result['message']);
+        $this->assertTrue($lock->isLocked());
+    }
+
+    public function testFilesPhaseAnswersNotFinalizedWhileTheDestinationIsStillFinishing(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturnOnConsecutiveCalls(
+            ['database' => ['status' => 'completed'], 'files' => ['status' => 'in_progress']],
+            ['database' => ['status' => 'completed'], 'files' => ['percentage' => 100, 'skipped_files' => []]],
+            ['database' => ['status' => 'completed'], 'files' => ['status' => 'completed']]
+        );
+        $this->backupService->method('getFileNextChunksBatch')
+            ->willReturn(['processed_chunks' => 0, 'completed' => true]);
+        $this->migrationService->method('finalizeMigration')
+            ->willReturn(['success' => true, 'finalized' => false]);
+
+        $result = $this->service($lock)->processBatch('mig_1');
+
+        $this->assertFalse($result['finalized']);
+        $this->assertSame('files', $result['phase']);
+        $this->assertTrue($lock->isLocked());
+    }
+
+    public function testStillFinishingIsFollowedByAFinalizedAnswerOnTheNextCall(): void
+    {
+        $lock = $this->lock();
+        $lock->acquire('mig_1');
+        $this->backupService->method('getBackupStatus')->willReturn([
+            'database' => ['status' => 'completed'],
+            'files' => ['status' => 'completed'],
+        ]);
+        $this->migrationService->expects($this->exactly(2))->method('finalizeMigration')
+            ->willReturnOnConsecutiveCalls(
+                ['success' => true, 'finalized' => false],
+                ['success' => true, 'finalized' => true]
+            );
+        $service = $this->service($lock);
+
+        $first = $service->processBatch('mig_1');
+        $second = $service->processBatch('mig_1');
+
+        $this->assertFalse($first['finalized']);
         $this->assertTrue($second['finalized']);
         $this->assertFalse($lock->isLocked());
     }

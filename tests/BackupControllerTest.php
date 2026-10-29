@@ -2,21 +2,21 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\Controllers\BackupController;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\Backup\ChunkService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Api\Controllers\BackupController;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DestinationNotAllowedException;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshake;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * @runTestsInSeparateProcesses
@@ -42,7 +42,7 @@ final class BackupControllerTest extends TestCase
         $backup->expects($this->once())->method('getFileProgress')
             ->with('mig_1', 'wp-content/a.jpg')->willReturn(['sent' => 1]);
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup))
             ->fileNextChunk(new \WP_REST_Request(['migration_id' => 'mig_1']));
 
         $this->assertSame(200, $response->get_status());
@@ -54,12 +54,15 @@ final class BackupControllerTest extends TestCase
         ], $response->get_data());
     }
 
-    public function testStartBackupTakesTheLockThroughTheService(): void
+    public function testStartBackupTakesTheLockThroughTheServiceAndSendsTheInfoChunk(): void
     {
         $backup = $this->createMock(BackupService::class);
+        $handshake = $this->createMock(DestinationHandshake::class);
         $backup->expects($this->once())->method('startBackup')->with('mig_1');
+        $handshake->expects($this->once())->method('sendInfo')->with('mig_1');
+        $backup->expects($this->never())->method('stopBackup');
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup, null, null, $handshake))
             ->startBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
 
         $this->assertSame(200, $response->get_status());
@@ -68,12 +71,55 @@ final class BackupControllerTest extends TestCase
     public function testStartBackupFailureIsReportedAndNothingElseRuns(): void
     {
         $backup = $this->createMock(BackupService::class);
+        $handshake = $this->createMock(DestinationHandshake::class);
         $backup->method('startBackup')->willThrowException(new Exception('Failed to acquire migration lock.'));
+        $handshake->expects($this->never())->method('sendInfo');
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup, null, null, $handshake))
             ->startBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
 
         $this->assertSame('start_failed', $response->get_error_code());
+    }
+
+    public function testStartBackupReleasesTheLockWhenTheDestinationRefusesTheInfoChunk(): void
+    {
+        $backup = $this->createMock(BackupService::class);
+        $handshake = $this->createMock(DestinationHandshake::class);
+        $handshake->method('sendInfo')->willThrowException(new Exception('Destination returned error: 400'));
+        $backup->expects($this->once())->method('stopBackup')->with('mig_1');
+
+        $response = (new BackupController($backup, null, null, $handshake))
+            ->startBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
+
+        $this->assertSame('start_failed', $response->get_error_code());
+        $this->assertSame(500, $response->get_error_data()['status']);
+        $this->assertStringContainsString('Destination returned error: 400', $response->get_error_message());
+    }
+
+    public function testStartBackupReportsTheInfoFailureEvenWhenReleasingTheLockFails(): void
+    {
+        $backup = $this->createMock(BackupService::class);
+        $handshake = $this->createMock(DestinationHandshake::class);
+        $handshake->method('sendInfo')->willThrowException(new Exception('Destination returned error: 400'));
+        $backup->method('stopBackup')->willThrowException(new Exception('Migration file not found'));
+
+        $response = (new BackupController($backup, null, null, $handshake))
+            ->startBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
+
+        $this->assertStringContainsString('Destination returned error: 400', $response->get_error_message());
+    }
+
+    public function testStartBackupRefusesABlockedDestinationWith400(): void
+    {
+        $backup = $this->createMock(BackupService::class);
+        $handshake = $this->createMock(DestinationHandshake::class);
+        $handshake->method('sendInfo')->willThrowException(new DestinationNotAllowedException());
+
+        $response = (new BackupController($backup, null, null, $handshake))
+            ->startBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
+
+        $this->assertSame('destination_not_allowed', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status']);
     }
 
     public function testStopBackupReleasesTheLockUnlessKeepLockIsSet(): void
@@ -87,7 +133,7 @@ final class BackupControllerTest extends TestCase
                     $this->assertSame([false, true], $calls);
                 }
             });
-        $controller = new BackupController($backup, $this->createMock(ChunkService::class));
+        $controller = new BackupController($backup);
 
         $controller->stopBackup(new \WP_REST_Request(['migration_id' => 'mig_1']));
         $controller->stopBackup(new \WP_REST_Request(['migration_id' => 'mig_1', 'keep_lock' => 'true']));
@@ -100,7 +146,7 @@ final class BackupControllerTest extends TestCase
         $backup->expects($this->once())->method('getFileProgress')->with('mig_1', null)
             ->willReturn(['sent' => 2]);
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup))
             ->fileNextChunk(new \WP_REST_Request(['migration_id' => 'mig_1']));
 
         $this->assertSame([
@@ -117,7 +163,7 @@ final class BackupControllerTest extends TestCase
         $backup->expects($this->once())->method('getDatabaseNextChunksBatch')
             ->with('mig_1', 3)->willReturn(['chunks' => [['type' => 'table_data']]]);
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup))
             ->databaseNextChunksBatch(new \WP_REST_Request(['migration_id' => 'mig_1', 'batch_size' => 3]));
 
         $this->assertSame(['chunks' => [['type' => 'table_data']]], $response->get_data());
@@ -128,7 +174,7 @@ final class BackupControllerTest extends TestCase
         $backup = $this->createMock(BackupService::class);
         $backup->method('getFileNextChunk')->willThrowException(new Exception('disk unavailable'));
 
-        $response = (new BackupController($backup, $this->createMock(ChunkService::class)))
+        $response = (new BackupController($backup))
             ->fileNextChunk(new \WP_REST_Request(['migration_id' => 'mig_1']));
 
         $this->assertSame('backup_failed', $response->get_error_code());
@@ -144,157 +190,12 @@ final class BackupControllerTest extends TestCase
         $this->assertTrue($lock->acquire('../outside'));
 
         $response = (new BackupController(
-            new BackupService($this->createMock(DatabaseScanner::class), new MigrationStorageService(), $lock),
-            $this->createMock(ChunkService::class)
+            new BackupService($this->createMock(DatabaseScanner::class), new MigrationStorageService(), $lock)
         ))->databaseNextChunk(new \WP_REST_Request(['migration_id' => '../outside']));
 
         $this->assertSame('invalid_id', $response->get_error_code());
         $this->assertSame('Invalid migration ID', $response->get_error_message());
         $this->assertSame(['status' => 400], $response->get_error_data());
         $this->assertDirectoryDoesNotExist($dir . 'collected');
-    }
-
-    public function testCollectChunkRejectsInvalidBodyWithoutSaving(): void
-    {
-        $chunks = $this->createMock(ChunkService::class);
-        $chunks->expects($this->once())->method('isValidChunkData')->with(['migration_id' => 'mig_1'])
-            ->willReturn(false);
-        $chunks->expects($this->never())->method('saveChunk');
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], ['migration_id' => 'mig_1']));
-
-        $this->assertSame('invalid_chunk', $response->get_error_code());
-        $this->assertSame(['status' => 400], $response->get_error_data());
-    }
-
-    public function testCollectChunkWithoutTokenAcknowledgesAndRegistersBody(): void
-    {
-        $body = ['type' => 'file_chunk', 'migration_id' => 'mig_1', 'chunk_id' => 'chunk_1'];
-        $chunks = $this->createMock(ChunkService::class);
-        $chunks->method('isValidChunkData')->with($body)->willReturn(true);
-        $chunks->expects($this->once())->method('saveChunk')->with('mig_1', $body)->willReturn('chunk_1.json');
-        $chunks->expects($this->once())->method('registerChunk')->with('mig_1', $body);
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], $body));
-
-        $this->assertSame(200, $response->get_status());
-        $data = $response->get_data();
-        $this->assertSame('acknowledgment', $data['type']);
-        $this->assertSame('mig_1', $data['migration_id']);
-        $this->assertSame('chunk_1', $data['chunk_id']);
-        $this->assertSame('received', $data['status']);
-        $this->assertFalse($data['processed']);
-        $this->assertSame('chunk_1.json', $data['saved_to']);
-        $this->assertNull($data['error']);
-        $this->assertNotEmpty($data['timestamp']);
-    }
-
-    public function testCollectChunkRejectsUnsafeMigrationIdWithoutSaving(): void
-    {
-        $body = ['type' => 'file_chunk', 'migration_id' => '../outside', 'chunk_id' => 'chunk_1'];
-        $chunks = $this->createMock(ChunkService::class);
-        $chunks->method('isValidChunkData')->with($body)->willReturn(true);
-        $chunks->expects($this->never())->method('saveChunk');
-        $chunks->expects($this->never())->method('registerChunk');
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], $body));
-
-        $this->assertSame('invalid_id', $response->get_error_code());
-        $this->assertSame('Invalid migration ID', $response->get_error_message());
-        $this->assertSame(['status' => 400], $response->get_error_data());
-    }
-
-    public function testCollectChunkRejectsUnsafeChunkIdWithoutSaving(): void
-    {
-        $body = ['type' => 'file_chunk', 'migration_id' => 'mig_1', 'chunk_id' => '../other_mig/status'];
-        $chunks = $this->createMock(ChunkService::class);
-        $chunks->method('isValidChunkData')->with($body)->willReturn(true);
-        $chunks->expects($this->never())->method('saveChunk');
-        $chunks->expects($this->never())->method('registerChunk');
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], $body));
-
-        $this->assertSame('invalid_id', $response->get_error_code());
-        $this->assertSame('Invalid chunk ID', $response->get_error_message());
-        $this->assertSame(['status' => 400], $response->get_error_data());
-    }
-
-    public function testIncompleteCompletionIsNotASuccessfulHttpResponse(): void
-    {
-        Config::set('migration_dir', sys_get_temp_dir() . '/wp-migrator-incomplete-' . bin2hex(random_bytes(4)) . '/');
-        FakeDatabase::install();
-
-        $response = (new BackupController($this->createMock(BackupService::class), new ChunkService()))
-            ->collectChunk(new \WP_REST_Request([], [], [
-                'type' => 'migration_complete',
-                'migration_id' => 'mig_1',
-            ]));
-
-        $this->assertInstanceOf(\WP_Error::class, $response);
-        $this->assertSame('collect_failed', $response->get_error_code());
-        $this->assertSame('Migration manifest is incomplete', $response->get_error_message());
-        $this->assertSame(['status' => 500], $response->get_error_data());
-        $this->assertNotSame(200, $response->get_error_data()['status']);
-    }
-
-    public function testIncompleteCompletionIsNotSaved(): void
-    {
-        $dir = sys_get_temp_dir() . '/wp-migrator-unsaved-' . bin2hex(random_bytes(4)) . '/';
-        Config::set('migration_dir', $dir);
-        FakeDatabase::install();
-
-        (new BackupController($this->createMock(BackupService::class), new ChunkService()))
-            ->collectChunk(new \WP_REST_Request([], [], [
-                'type' => 'migration_complete',
-                'migration_id' => 'mig_1',
-            ]));
-
-        $this->assertFileDoesNotExist($dir . 'collected/mig_1/migration_complete.json');
-    }
-
-    public function testFinishedCompletionAcknowledgementIncludesSuccess(): void
-    {
-        Config::set('migration_dir', sys_get_temp_dir() . '/wp-migrator-complete-' . bin2hex(random_bytes(4)) . '/');
-        FakeDatabase::install();
-        $chunks = new ChunkService();
-        $chunks->saveChunk('mig_1', ['type' => 'info', 'migration_id' => 'mig_1']);
-        $chunks->registerChunk('mig_1', ['type' => 'info', 'migration_id' => 'mig_1', 'files' => [], 'tables' => []]);
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], [
-                'type' => 'migration_complete',
-                'migration_id' => 'mig_1',
-                'chunk_id' => 'complete_1',
-            ]));
-
-        $this->assertSame(200, $response->get_status());
-        $data = $response->get_data();
-        $this->assertTrue($data['success']);
-        $this->assertTrue($data['processed']);
-        $this->assertSame('acknowledgment', $data['type']);
-        $this->assertSame('mig_1', $data['migration_id']);
-        $this->assertSame('complete_1', $data['chunk_id']);
-        $this->assertSame('received', $data['status']);
-        $this->assertNull($data['error']);
-        $this->assertSame('migration_completed', $data['processing_result']['action']);
-    }
-
-    public function testCollectChunkSaveExceptionBecomesApiError(): void
-    {
-        $chunks = $this->createMock(ChunkService::class);
-        $chunks->method('isValidChunkData')->willReturn(true);
-        $chunks->method('saveChunk')->willThrowException(new Exception('cannot write'));
-        $chunks->expects($this->never())->method('registerChunk');
-
-        $response = (new BackupController($this->createMock(BackupService::class), $chunks))
-            ->collectChunk(new \WP_REST_Request([], [], ['type' => 'file_chunk']));
-
-        $this->assertSame('collect_failed', $response->get_error_code());
-        $this->assertSame('cannot write', $response->get_error_message());
-        $this->assertSame(['status' => 500], $response->get_error_data());
     }
 }

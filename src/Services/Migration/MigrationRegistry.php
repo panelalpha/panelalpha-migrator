@@ -1,17 +1,16 @@
 <?php
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Database;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\PathProvider;
 
 /**
  * Class MigrationRegistry
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Manages the state and progress of a migration.
  */
@@ -42,7 +41,6 @@ class MigrationRegistry
     private string $migrationDir;
     private string $statusFile;
     private string $migrationFile;
-    private Database $db;
 
     /**
      * MigrationRegistry constructor.
@@ -59,7 +57,6 @@ class MigrationRegistry
         $this->migrationDir = Config::get('migration_dir') . 'collected/' . $migrationId . '/';
         $this->statusFile = $this->migrationDir . 'status.json';
         $this->migrationFile = Config::get('migration_dir') . $migrationId . '.json';
-        $this->db = Database::getInstance();
     }
 
     /**
@@ -72,7 +69,14 @@ class MigrationRegistry
     {
         $this->ensureMigrationDirectoryExists();
 
+        $hash = $this->getTableHash();
         $status = $this->buildInitialStatus($migrationInfo);
+
+        // A repeated info chunk keeps the table prefix, so the temporary tables already made stay known.
+        if ($hash !== null) {
+            $status['temp_hash'] = $hash;
+        }
+
         $this->saveStatus($status);
         $this->saveFileChunkIndex($migrationInfo['files'] ?? []);
 
@@ -88,11 +92,12 @@ class MigrationRegistry
      */
     public function withStatusLock(callable $callback)
     {
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- the status lock is a flock held for the whole chunk, which WP_Filesystem does not offer
         $handle = is_dir($this->migrationDir) ? @fopen($this->migrationDir . 'status.lock', 'c') : false;
 
         if ($handle === false || !flock($handle, LOCK_EX)) {
             if (is_resource($handle)) {
-                fclose($handle);
+                fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- the status lock is a flock held for the whole chunk, which WP_Filesystem does not offer
             }
 
             return $callback();
@@ -107,7 +112,7 @@ class MigrationRegistry
             self::$lockedStatusFile = null;
             self::$lockedStatus = null;
             flock($handle, LOCK_UN);
-            fclose($handle);
+            fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- the status lock is a flock held for the whole chunk, which WP_Filesystem does not offer
         }
     }
 
@@ -218,6 +223,68 @@ class MigrationRegistry
     }
 
     /**
+     * Gets the six hex characters of the temporary and backup table prefixes.
+     *
+     * @return string|null
+     */
+    public function getTableHash(): ?string
+    {
+        return $this->getStatus()['temp_hash'] ?? null;
+    }
+
+    /**
+     * Gets the destination, temporary and backup table names of every table of the migration.
+     *
+     * @return array<string, array{destination: string, temp: string, backup: string}>
+     */
+    public function getTableMap(): array
+    {
+        $map = [];
+
+        foreach (($this->getStatus()['tables'] ?? []) as $name => $table) {
+            if (isset($table['temp'])) {
+                $map[$name] = [
+                    'destination' => $table['destination'],
+                    'temp' => $table['temp'],
+                    'backup' => $table['backup'],
+                ];
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * Stores the table prefix hash and the table name map in the status.
+     *
+     * @param string $hash
+     * @param array  $map
+     * @return bool
+     */
+    public function saveTableMap(string $hash, array $map): bool
+    {
+        $status = $this->getStatus();
+
+        if (!$status) {
+            return false;
+        }
+
+        $status['temp_hash'] = $hash;
+
+        foreach ($map as $name => $names) {
+            if (isset($status['tables'][$name])) {
+                $status['tables'][$name]['destination'] = $names['destination'];
+                $status['tables'][$name]['temp'] = $names['temp'];
+                $status['tables'][$name]['backup'] = $names['backup'];
+            }
+        }
+
+        $this->saveStatus($status);
+
+        return true;
+    }
+
+    /**
      * Adds an error to the migration log.
      *
      * @param string $error
@@ -232,7 +299,7 @@ class MigrationRegistry
         }
 
         $status['errors'][] = [
-            'timestamp' => date('c'),
+            'timestamp' => gmdate('c'),
             'message' => $error
         ];
 
@@ -640,7 +707,7 @@ class MigrationRegistry
 
         $status = [
             'migration_id' => $this->migrationId,
-            'registered_at' => date('c'),
+            'registered_at' => gmdate('c'),
             'status' => self::STATUS_COLLECTING,
             'files' => [],
             'tables' => [],
@@ -650,6 +717,7 @@ class MigrationRegistry
             'tables_restored' => 0,
             'restore_started_at' => null,
             'restore_completed_at' => null,
+            'keep_backup' => filter_var($migrationInfo['keep_backup'] ?? false, FILTER_VALIDATE_BOOLEAN),
             'errors' => []
         ];
 
@@ -911,11 +979,11 @@ class MigrationRegistry
     private function updateStatusTimestamps(array &$status, string $newStatus): void
     {
         if ($newStatus === self::STATUS_RESTORING && !$status['restore_started_at']) {
-            $status['restore_started_at'] = date('c');
+            $status['restore_started_at'] = gmdate('c');
         }
 
         if ($newStatus === self::STATUS_RESTORED) {
-            $status['restore_completed_at'] = date('c');
+            $status['restore_completed_at'] = gmdate('c');
         }
     }
 
@@ -951,7 +1019,7 @@ class MigrationRegistry
         foreach ($files as $file) {
             // Without every chunk list the manifest stays the only source.
             if (!isset($file['path']) || !is_array($file['chunks'] ?? null)) {
-                @unlink($indexFile);
+                wp_delete_file($indexFile);
                 return;
             }
 
@@ -964,7 +1032,7 @@ class MigrationRegistry
         $json = json_encode($index, JSON_UNESCAPED_SLASHES);
 
         if ($json === false || !Filesystem::writeFileAtomic($indexFile, $json)) {
-            @unlink($indexFile);
+            wp_delete_file($indexFile);
         }
     }
 

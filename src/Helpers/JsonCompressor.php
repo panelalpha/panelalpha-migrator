@@ -1,11 +1,11 @@
 <?php
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class JsonCompressor
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Compresses JSON data by using shorter keys to reduce file size.
  */

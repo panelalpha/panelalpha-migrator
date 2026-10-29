@@ -1,35 +1,23 @@
 <?php
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
 
 /**
  * Class ChunkService
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Service for handling backup chunks.
  */
 class ChunkService
 {
-    /**
-     * Validates chunk data.
-     *
-     * @param array $chunkData
-     * @return bool
-     */
-    public function isValidChunkData(array $chunkData): bool
-    {
-        return !empty($chunkData) && isset($chunkData['type']);
-    }
-
     /**
      * Saves a chunk to a file.
      *
@@ -48,24 +36,6 @@ class ChunkService
         $this->saveChunkToFile($migrationDir . $filename, $chunkData);
 
         return $filename;
-    }
-
-    /**
-     * Registers a chunk in the migration registry.
-     *
-     * @param string $migrationId
-     * @param array  $chunkData
-     */
-    public function registerChunk(string $migrationId, array $chunkData): void
-    {
-        $this->assertSafeMigrationId($migrationId);
-        $registry = new MigrationRegistry($migrationId);
-
-        if ($chunkData['type'] === 'info') {
-            $registry->registerMigration(MigrationInfoGenerator::withoutSecrets($chunkData));
-        } else {
-            $registry->markChunkReceived($chunkData['type'], $chunkData);
-        }
     }
 
     /**

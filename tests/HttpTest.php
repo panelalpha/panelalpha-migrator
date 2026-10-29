@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\HttpError;
-use WordpressMigrator\Helpers\HttpResponse;
-use WordpressMigrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\HttpError;
+use PanelAlpha\Migrator\Helpers\HttpResponse;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
 
 final class HttpTest extends TestCase
 {
@@ -19,6 +19,7 @@ final class HttpTest extends TestCase
     protected function setUp(): void
     {
         $this->destination = FakeDestination::get();
+        unset($GLOBALS['http_wp_hooks'], $GLOBALS['http_wp_requests'], $GLOBALS['http_wp_skip_curl_hooks']);
     }
 
     public function testPostSendsBodyAndHeadersOverHttp11(): void
@@ -41,6 +42,34 @@ final class HttpTest extends TestCase
         $this->assertSame('application/json', $request['headers']['content-type']);
         $this->assertSame('abc', $request['headers']['x-migrator-token']);
         $this->assertSame('{"a":1}', $request['body']);
+    }
+
+    public function testGetSendsHeadersWithoutABodyOverHttp11(): void
+    {
+        $response = Http::get($this->destination->url() . '/endpoint?x=1', [
+            'headers' => ['X-Migrator-Token' => 'abc'],
+            'timeout' => 5,
+        ]);
+
+        $this->assertFalse(Http::isError($response));
+        $this->assertSame(200, Http::retrieveResponseCode($response));
+        $request = $this->destination->requests()[0];
+        $this->assertSame('GET', $request['method']);
+        $this->assertSame('/endpoint?x=1', $request['uri']);
+        $this->assertSame('HTTP/1.1', $request['protocol']);
+        $this->assertSame('abc', $request['headers']['x-migrator-token']);
+        $this->assertSame('', $request['body']);
+    }
+
+    public function testGetConnectsToTheManualIp(): void
+    {
+        $port = $this->destination->port();
+        CurlOptionCapture::reset();
+
+        $response = Http::get('http://destination.invalid:' . $port . '/pinned', ['ip' => '127.0.0.1', 'timeout' => 5]);
+
+        $this->assertFalse(Http::isError($response));
+        $this->assertSame(['destination.invalid:' . $port . ':127.0.0.1'], CurlOptionCapture::get(CURLOPT_RESOLVE));
     }
 
     public function testErrorStatusIsAResponseNotAnError(): void
@@ -206,6 +235,55 @@ final class HttpTest extends TestCase
         $this->assertTrue(CurlOptionCapture::hostVerificationEnabled());
     }
 
+    public function testPostGoesThroughWordPressWithoutRedirects(): void
+    {
+        Http::post($this->destination->url() . '/endpoint', [
+            'headers' => ['X-Migrator-Token' => 'abc'],
+            'body' => '{"a":1}',
+            'timeout' => 5,
+        ]);
+
+        $args = $GLOBALS['http_wp_requests'][0]['args'];
+        $this->assertSame(['X-Migrator-Token' => 'abc'], $args['headers']);
+        $this->assertSame('{"a":1}', $args['body']);
+        $this->assertSame(5, $args['timeout']);
+        $this->assertTrue($args['sslverify']);
+        $this->assertSame(0, $args['redirection']);
+        $this->assertSame([], $GLOBALS['http_wp_hooks']['http_api_curl']);
+    }
+
+    public function testCurlHookLeavesOtherRequestsAlone(): void
+    {
+        // Another plugin sends its own request while ours is being prepared.
+        $GLOBALS['http_wp_hooks']['http_api_curl'] = [static function ($handle, array $args): void {
+            if (!empty($args['panelalpha_migrator_request'])) {
+                CurlOptionCapture::reset();
+                wp_remote_post('http://other.invalid/', ['body' => '', 'timeout' => 1]);
+                $GLOBALS['http_wp_other_resolve'] = CurlOptionCapture::get(CURLOPT_RESOLVE);
+            }
+        }];
+
+        Http::post('http://destination.invalid:' . $this->destination->port() . '/pinned', [
+            'ip' => '127.0.0.1',
+            'timeout' => 5,
+        ]);
+
+        $this->assertNull($GLOBALS['http_wp_other_resolve']);
+    }
+
+    public function testPinnedRequestNotSentOverCurlIsAnError(): void
+    {
+        $GLOBALS['http_wp_skip_curl_hooks'] = true;
+
+        $response = Http::post($this->destination->url() . '/x', ['ip' => '127.0.0.1', 'timeout' => 5]);
+
+        $this->assertInstanceOf(HttpError::class, $response);
+        $this->assertSame(
+            'The request was not sent over cURL, so the pinned IP address was not used',
+            $response->getErrorMessage()
+        );
+    }
+
     /**
      * Accepts one connection on 127.0.0.1:$port and returns a reader for the bytes it received.
      *
@@ -213,7 +291,7 @@ final class HttpTest extends TestCase
      */
     private function captureTlsClientHello(int $port): callable
     {
-        $directory = sys_get_temp_dir() . '/wp-migrator-tls-' . bin2hex(random_bytes(4));
+        $directory = sys_get_temp_dir() . '/panelalpha-migrator-tls-' . bin2hex(random_bytes(4));
         mkdir($directory);
         file_put_contents($directory . '/listen.php', <<<'PHP'
 <?php

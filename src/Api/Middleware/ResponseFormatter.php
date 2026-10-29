@@ -1,13 +1,13 @@
 <?php
 
-namespace WordpressMigrator\Api\Middleware;
+namespace PanelAlpha\Migrator\Api\Middleware;
 
-use WordpressMigrator\Helpers\Response;
+use PanelAlpha\Migrator\Helpers\Response;
 
 /**
  * Class ResponseFormatter
  *
- * @package WordpressMigrator\Api\Middleware
+ * @package PanelAlpha\Migrator\Api\Middleware
  *
  * Formats API responses for both WordPress and standalone execution.
  */

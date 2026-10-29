@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\BinarySafeEncoder;
+use PanelAlpha\Migrator\Helpers\BinarySafeEncoder;
 
 final class BinarySafeEncoderTest extends TestCase
 {

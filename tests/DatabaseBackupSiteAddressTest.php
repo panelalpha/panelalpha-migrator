@@ -2,19 +2,19 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Dto\TableChunk;
-use WordpressMigrator\Dto\TableStructure;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Services\Backup\DatabaseBackupService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Dto\TableChunk;
+use PanelAlpha\Migrator\Dto\TableStructure;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Services\Backup\DatabaseBackupService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * @runTestsInSeparateProcesses

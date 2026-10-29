@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests\Support;
+namespace PanelAlpha\Migrator\Tests\Support;
 
 use PHPUnit\Framework\Attributes\After;
 use ReflectionClass;
-use WordpressMigrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Config;
 
 /**
- * Clears the plugin's static state between tests: Config, the Database singleton and $table_prefix.
+ * Clears the plugin's static state between tests: Config, $table_prefix and $wpdb.
  */
 trait ResetsGlobalState
 {
@@ -20,7 +20,6 @@ trait ResetsGlobalState
     protected function resetGlobalState(): void
     {
         (new ReflectionClass(Config::class))->setStaticPropertyValue('config', []);
-        FakeDatabase::reset();
-        unset($GLOBALS['table_prefix']);
+        unset($GLOBALS['table_prefix'], $GLOBALS['wpdb']);
     }
 }

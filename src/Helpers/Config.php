@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class Config
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Handles plugin configuration.
  */
@@ -45,10 +45,10 @@ class Config
     {
         // Set default configuration
         self::$config = [
-            'plugin_dir' => WP_MIGRATOR_PLUGIN_DIR ?? dirname(__DIR__, 2) . '/',
-            'plugin_url' => WP_MIGRATOR_PLUGIN_URL ?? '',
-            'migration_dir' => WP_MIGRATOR_MIGRATION_DIR ?? dirname(__DIR__, 2) . '/migrations/',
-            'version' => WP_MIGRATOR_VERSION ?? '1.0.0',
+            'plugin_dir' => PANELALPHA_MIGRATOR_PLUGIN_DIR ?? dirname(__DIR__, 2) . '/',
+            'plugin_url' => PANELALPHA_MIGRATOR_PLUGIN_URL ?? '',
+            'migration_dir' => PANELALPHA_MIGRATOR_MIGRATION_DIR ?? dirname(__DIR__, 2) . '/migrations/',
+            'version' => PANELALPHA_MIGRATOR_VERSION ?? '1.0.0',
             'site_url' => self::getSiteUrl(),
             'home_url' => self::getHomeUrl(),
             'wp_version' => self::getWpVersion(),
@@ -60,7 +60,7 @@ class Config
     }
 
     /**
-     * Gets the migrator mode from config.php.
+     * Gets the migrator mode from the plugin settings.
      *
      * @return string
      */
@@ -70,7 +70,7 @@ class Config
     }
 
     /**
-     * Gets the show mode switcher setting from config.php.
+     * Gets the show mode switcher setting from the plugin settings.
      *
      * @return bool
      */

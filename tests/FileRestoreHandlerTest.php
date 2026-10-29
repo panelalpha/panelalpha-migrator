@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Restore\FileRestoreHandler;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Restore\FileRestoreHandler;
+use PanelAlpha\Migrator\Restore\StagedFiles;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class FileRestoreHandlerTest extends TestCase
 {
@@ -55,37 +55,37 @@ final class FileRestoreHandlerTest extends TestCase
 
     public function testLaterChunksAreAppended(): void
     {
-        $this->handler->restoreChunk($this->chunk('big.bin', 'part1-', 1, 3));
-        $this->handler->restoreChunk($this->chunk('big.bin', 'part2-', 2, 3));
-        $this->handler->restoreChunk($this->chunk('big.bin', 'part3', 3, 3));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', 'part1-', 1, 3));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', 'part2-', 2, 3));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', 'part3', 3, 3));
 
-        $this->assertSame('part1-part2-part3', file_get_contents($this->abspath . 'big.bin'));
+        $this->assertSame('part1-part2-part3', file_get_contents($this->abspath . 'wp-content/uploads/big.bin'));
     }
 
     public function testFirstChunkReplacesAnExistingFile(): void
     {
-        file_put_contents($this->abspath . 'index.php', 'old content that is longer');
+        self::writeFile($this->abspath . 'wp-content/uploads/readme.txt', 'old content that is longer');
 
-        $this->handler->restoreChunk($this->chunk('index.php', 'new', 1, 1));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/readme.txt', 'new', 1, 1));
 
-        $this->assertSame('new', file_get_contents($this->abspath . 'index.php'));
+        $this->assertSame('new', file_get_contents($this->abspath . 'wp-content/uploads/readme.txt'));
     }
 
     public function testEmptyFileIsCreated(): void
     {
-        $this->handler->restoreChunk($this->chunk('empty.txt', '', 1, 1));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/empty.txt', '', 1, 1));
 
-        $this->assertFileExists($this->abspath . 'empty.txt');
-        $this->assertSame('', file_get_contents($this->abspath . 'empty.txt'));
+        $this->assertFileExists($this->abspath . 'wp-content/uploads/empty.txt');
+        $this->assertSame('', file_get_contents($this->abspath . 'wp-content/uploads/empty.txt'));
     }
 
     public function testBinaryContentArrivesUnchanged(): void
     {
         $binary = random_bytes(2048);
 
-        $this->handler->restoreChunk($this->chunk('image.png', $binary, 1, 1));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/image.png', $binary, 1, 1));
 
-        $this->assertSame($binary, file_get_contents($this->abspath . 'image.png'));
+        $this->assertSame($binary, file_get_contents($this->abspath . 'wp-content/uploads/image.png'));
     }
 
     public static function protectedPaths(): array
@@ -94,7 +94,7 @@ final class FileRestoreHandlerTest extends TestCase
             ['wp-config.php'],
             ['.htaccess'],
             ['wp-content/migrations/mig_1.json'],
-            ['wp-content/plugins/wordpress-migrator/config.php'],
+            ['wp-content/plugins/panelalpha-migrator/config.php'],
             ['./wp-config.php'],
             ['wp-content/../wp-config.php'],
         ];
@@ -115,7 +115,7 @@ final class FileRestoreHandlerTest extends TestCase
         $this->assertSame('Critical file excluded from restore', $result['reason']);
         $this->assertFalse($result['can_retry']);
         $this->assertSame('destination config', file_get_contents($this->abspath . 'wp-config.php'));
-        $this->assertFileDoesNotExist($this->abspath . 'wp-content/plugins/wordpress-migrator/config.php');
+        $this->assertFileDoesNotExist($this->abspath . 'wp-content/plugins/panelalpha-migrator/config.php');
         $this->assertStringContainsString('SKIPPED: ', file_get_contents($this->migrationDir . 'skipped_files_mig_1.log'));
     }
 
@@ -129,11 +129,11 @@ final class FileRestoreHandlerTest extends TestCase
 
     public function testPermissionsFromTheChunkAreMaskedToTheNineLowBits(): void
     {
-        $this->handler->restoreChunk($this->chunk('script.sh', 'x', 1, 1, '4755'));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/script.sh', 'x', 1, 1, '4755'));
 
         clearstatcache();
-        $this->assertSame('755', substr(sprintf('%o', fileperms($this->abspath . 'script.sh')), -3));
-        $this->assertSame(0, fileperms($this->abspath . 'script.sh') & 04000);
+        $this->assertSame('755', substr(sprintf('%o', fileperms($this->abspath . 'wp-content/uploads/script.sh')), -3));
+        $this->assertSame(0, fileperms($this->abspath . 'wp-content/uploads/script.sh') & 04000);
     }
 
     public function testNullByteInThePathFailsOnlyThatChunk(): void
@@ -162,9 +162,10 @@ final class FileRestoreHandlerTest extends TestCase
     {
         $outside = $this->createTemporaryDirectory();
         file_put_contents($outside . 'victim.txt', 'original');
-        symlink($outside . 'victim.txt', $this->abspath . 'link.txt');
+        mkdir($this->abspath . 'wp-content/uploads', 0755, true);
+        symlink($outside . 'victim.txt', $this->abspath . 'wp-content/uploads/link.txt');
 
-        $result = $this->handler->restoreChunk($this->chunk('link.txt', 'pwned', 1, 1));
+        $result = $this->handler->restoreChunk($this->chunk('wp-content/uploads/link.txt', 'pwned', 1, 1));
 
         $this->assertTrue($result['failed']);
         $this->assertSame('original', file_get_contents($outside . 'victim.txt'));
@@ -260,10 +261,10 @@ final class FileRestoreHandlerTest extends TestCase
 
     public function testFailedWriteStaysPendingAndSucceedsAfterTheCauseIsFixed(): void
     {
-        mkdir($this->abspath . 'a-folder.txt');
+        mkdir($this->abspath . 'wp-content/uploads/a-folder.txt', 0755, true);
         $this->registry->expects($this->never())->method('markChunkRestored');
 
-        $failed = $this->handler->restoreChunk($this->chunk('a-folder.txt', 'hello', 1, 1));
+        $failed = $this->handler->restoreChunk($this->chunk('wp-content/uploads/a-folder.txt', 'hello', 1, 1));
 
         $this->assertTrue($failed['failed']);
         $this->assertSame('pending', $failed['status']);
@@ -271,68 +272,66 @@ final class FileRestoreHandlerTest extends TestCase
         $this->assertSame('Failed to write file (disk full or permissions issue)', $failed['reason']);
         $this->assertArrayNotHasKey('skipped', $failed);
 
-        rmdir($this->abspath . 'a-folder.txt');
+        rmdir($this->abspath . 'wp-content/uploads/a-folder.txt');
         $registry = $this->createMock(MigrationRegistry::class);
         $registry->method('getStatus')->willReturn(['migration_id' => 'mig_1']);
         $registry->expects($this->once())->method('markChunkRestored')->with('file_chunk', $this->anything());
         $handler = new FileRestoreHandler($registry, $this->abspath);
 
-        $restored = $handler->restoreChunk($this->chunk('a-folder.txt', 'hello', 1, 1));
+        $restored = $handler->restoreChunk($this->chunk('wp-content/uploads/a-folder.txt', 'hello', 1, 1));
 
         $this->assertSame('restored_file_chunk', $restored['action']);
-        $this->assertSame('hello', file_get_contents($this->abspath . 'a-folder.txt'));
+        $this->assertSame('hello', file_get_contents($this->abspath . 'wp-content/uploads/a-folder.txt'));
     }
 
     public function testReplayingAChunkDoesNotDuplicateOrTruncateBytes(): void
     {
-        FakeDatabase::install();
         $registry = new MigrationRegistry('mig_replay');
         $registry->registerMigration([
             'summary' => ['estimated_chunks' => 2],
-            'files' => [['path' => 'big.bin', 'total_chunks' => 2]],
+            'files' => [['path' => 'wp-content/uploads/big.bin', 'total_chunks' => 2]],
         ]);
-        $this->writeManifest('mig_replay', 'big.bin', [
+        $this->writeManifest('mig_replay', 'wp-content/uploads/big.bin', [
             ['offset' => 0, 'size' => 6],
             ['offset' => 6, 'size' => 4],
         ]);
         $handler = new FileRestoreHandler($registry, $this->abspath);
 
-        $handler->restoreChunk($this->chunk('big.bin', '012345', 1, 2, '644', null, 0));
-        $handler->restoreChunk($this->chunk('big.bin', '6789', 2, 2, '644', null, 6));
+        $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', '012345', 1, 2, '644', null, 0));
+        $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', '6789', 2, 2, '644', null, 6));
         $checksum = hash('sha256', '0123456789');
 
-        $handler->restoreChunk($this->chunk('big.bin', '6789', 2, 2, '644', null, 6));
-        $handler->restoreChunk($this->chunk('big.bin', '012345', 1, 2, '644', null, 0));
+        $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', '6789', 2, 2, '644', null, 6));
+        $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', '012345', 1, 2, '644', null, 0));
 
-        $this->assertSame('0123456789', file_get_contents($this->abspath . 'big.bin'));
-        $this->assertSame($checksum, hash('sha256', file_get_contents($this->abspath . 'big.bin')));
-        $status = $registry->getStatus()['files']['big.bin'];
+        $this->assertSame('0123456789', file_get_contents($this->abspath . 'wp-content/uploads/big.bin'));
+        $this->assertSame($checksum, hash('sha256', file_get_contents($this->abspath . 'wp-content/uploads/big.bin')));
+        $status = $registry->getStatus()['files']['wp-content/uploads/big.bin'];
         $this->assertSame(2, $status['restored_chunks']);
     }
 
     public function testChunkOffsetSizeAndNumberMustMatchTheManifest(): void
     {
-        FakeDatabase::install();
         $registry = new MigrationRegistry('mig_manifest');
         $registry->registerMigration([
-            'files' => [['path' => 'big.bin', 'total_chunks' => 2]],
+            'files' => [['path' => 'wp-content/uploads/big.bin', 'total_chunks' => 2]],
         ]);
-        $this->writeManifest('mig_manifest', 'big.bin', [
+        $this->writeManifest('mig_manifest', 'wp-content/uploads/big.bin', [
             ['offset' => 0, 'size' => 4],
             ['offset' => 4, 'size' => 4],
         ]);
         $handler = new FileRestoreHandler($registry, $this->abspath);
-        $handler->restoreChunk($this->chunk('big.bin', 'aaaa', 1, 2, '644', null, 0));
+        $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', 'aaaa', 1, 2, '644', null, 0));
 
         try {
-            $handler->restoreChunk($this->chunk('big.bin', 'bbbb', 2, 2, '644', null, 0));
+            $handler->restoreChunk($this->chunk('wp-content/uploads/big.bin', 'bbbb', 2, 2, '644', null, 0));
             $this->fail('A chunk whose offset does not match the manifest must be rejected');
         } catch (\Exception $exception) {
             $this->assertStringContainsString('does not match the manifest', $exception->getMessage());
         }
 
-        $this->assertSame('aaaa', file_get_contents($this->abspath . 'big.bin'));
-        $this->assertSame(1, $registry->getStatus()['files']['big.bin']['restored_chunks']);
+        $this->assertSame('aaaa', file_get_contents($this->abspath . 'wp-content/uploads/big.bin'));
+        $this->assertSame(1, $registry->getStatus()['files']['wp-content/uploads/big.bin']['restored_chunks']);
     }
 
     public function testMissingMigrationIdIsLoggedAsUnknown(): void
@@ -344,6 +343,177 @@ final class FileRestoreHandlerTest extends TestCase
         $handler->restoreChunk($this->chunk('wp-config.php', 'x', 1, 1));
 
         $this->assertFileExists($this->migrationDir . 'skipped_files_unknown.log');
+    }
+
+    public function testCodeFilesGoToTheStagingFolderAndNotToTheLiveSite(): void
+    {
+        self::writeFile($this->abspath . 'wp-includes/version.php', 'live');
+
+        $result = $this->handler->restoreChunk($this->chunk('wp-includes/version.php', 'staged', 1, 1));
+
+        $this->assertSame('restored_file_chunk', $result['action']);
+        $this->assertSame('live', file_get_contents($this->abspath . 'wp-includes/version.php'));
+        $this->assertSame('staged', file_get_contents($this->stagedRoot() . 'wp-includes/version.php' . StagedFiles::SUFFIX));
+    }
+
+    public function testStagedFileGetsItsPermissionsAndDate(): void
+    {
+        $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/a.php', '<?php', 1, 1, '640', '2024-02-03T04:05:06+00:00'));
+
+        $path = $this->stagedRoot() . 'wp-content/plugins/a/a.php' . StagedFiles::SUFFIX;
+        clearstatcache();
+        $this->assertSame('640', substr(sprintf('%o', fileperms($path)), -3));
+        $this->assertSame(strtotime('2024-02-03T04:05:06+00:00'), filemtime($path));
+    }
+
+    public function testStagedFileArrivesInChunks(): void
+    {
+        $this->handler->restoreChunk($this->chunk('wp-content/themes/t/functions.php', 'part1-', 1, 2));
+        $this->handler->restoreChunk($this->chunk('wp-content/themes/t/functions.php', 'part2', 2, 2));
+
+        $this->assertSame('part1-part2', file_get_contents($this->stagedRoot() . 'wp-content/themes/t/functions.php' . StagedFiles::SUFFIX));
+    }
+
+    public function testPhpFileInUploadsIsStagedAndImagesAreWrittenInPlace(): void
+    {
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/2024/index.php', '<?php', 1, 1));
+        $this->handler->restoreChunk($this->chunk('wp-content/uploads/2024/a.jpg', 'jpg', 1, 1));
+
+        $this->assertFileExists($this->stagedRoot() . 'wp-content/uploads/2024/index.php' . StagedFiles::SUFFIX);
+        $this->assertFileDoesNotExist($this->abspath . 'wp-content/uploads/2024/index.php');
+        $this->assertSame('jpg', file_get_contents($this->abspath . 'wp-content/uploads/2024/a.jpg'));
+        $this->assertFileDoesNotExist($this->stagedRoot() . 'wp-content/uploads/2024/a.jpg');
+    }
+
+    public function testStagingFolderIsProtectedFromListing(): void
+    {
+        $this->handler->restoreChunk($this->chunk('index.php', '<?php', 1, 1));
+
+        $this->assertFileExists($this->migrationDir . 'mig_1/index.php');
+        $this->assertFileExists($this->migrationDir . 'mig_1/.htaccess');
+        $this->assertSame('<?php', file_get_contents($this->stagedRoot() . 'index.php' . StagedFiles::SUFFIX));
+    }
+
+    public static function destinationDropIns(): array
+    {
+        return [
+            ['wp-content/object-cache.php'],
+            ['wp-content/advanced-cache.php'],
+            ['wp-content/db.php'],
+            ['wp-content/Object-Cache.php'],
+        ];
+    }
+
+    /**
+     * @dataProvider destinationDropIns
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('destinationDropIns')]
+    public function testDropInsOfTheSourceAreNotWritten(string $path): void
+    {
+        self::writeFile($this->abspath . 'wp-content/object-cache.php', 'destination drop-in');
+        $this->registry->expects($this->once())->method('markChunkRestored');
+
+        $result = $this->handler->restoreChunk($this->chunk($path, 'source drop-in', 1, 1));
+
+        $this->assertTrue($result['skipped']);
+        $this->assertSame('Destination drop-in is kept', $result['reason']);
+        $this->assertSame('destination drop-in', file_get_contents($this->abspath . 'wp-content/object-cache.php'));
+        $this->assertDirectoryDoesNotExist($this->stagedRoot() . 'wp-content');
+    }
+
+    public function testOtherFilesNamedLikeDropInsAreStillStaged(): void
+    {
+        $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/db.php', 'x', 1, 1));
+
+        $this->assertFileExists($this->stagedRoot() . 'wp-content/plugins/a/db.php' . StagedFiles::SUFFIX);
+    }
+
+    public function testPluginFolderUnderAnotherNameIsNeverWritten(): void
+    {
+        $own = $this->abspath . 'wp-content/plugins/migrator-renamed';
+        mkdir($own, 0755, true);
+        Config::set('plugin_dir', $own . '/');
+        $handler = new FileRestoreHandler($this->registry, $this->abspath);
+
+        $result = $handler->restoreChunk($this->chunk('wp-content/plugins/migrator-renamed/src/Plugin.php', 'x', 1, 1));
+
+        $this->assertTrue($result['skipped']);
+        $this->assertFileDoesNotExist($this->stagedRoot() . 'wp-content/plugins/migrator-renamed/src/Plugin.php');
+    }
+
+    public function testSymlinkedParentInsideTheStagingFolderLeadingOutsideIsNotWrittenThrough(): void
+    {
+        $outside = $this->createTemporaryDirectory();
+        mkdir($this->stagedRoot() . 'wp-content/plugins', 0755, true);
+        symlink(rtrim($outside, '/'), $this->stagedRoot() . 'wp-content/plugins/linked');
+
+        $result = $this->handler->restoreChunk($this->chunk('wp-content/plugins/linked/a.php', 'pwned', 1, 1));
+
+        $this->assertTrue($result['failed']);
+        $this->assertFileDoesNotExist($outside . 'a.php');
+    }
+
+    public function testStagedFileThatIsASymlinkIsNotWrittenThrough(): void
+    {
+        $outside = $this->createTemporaryDirectory();
+        file_put_contents($outside . 'victim.php', 'original');
+        mkdir($this->stagedRoot(), 0755, true);
+        symlink($outside . 'victim.php', $this->stagedRoot() . 'evil.php' . StagedFiles::SUFFIX);
+
+        $result = $this->handler->restoreChunk($this->chunk('evil.php', 'pwned', 1, 1));
+
+        $this->assertTrue($result['failed']);
+        $this->assertSame('original', file_get_contents($outside . 'victim.php'));
+    }
+
+    public function testStagedFileIsWrittenWithTheSuffixAndNoRealNameExists(): void
+    {
+        $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/a.php', 'part1-', 1, 2));
+        $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/a.php', 'part2', 2, 2));
+
+        $this->assertFileExists($this->stagedRoot() . 'wp-content/plugins/a/a.php.pam-staged');
+        $this->assertFileDoesNotExist($this->stagedRoot() . 'wp-content/plugins/a/a.php');
+    }
+
+    public function testStagedNamesThatEndWithTheSuffixAreRefused(): void
+    {
+        $this->registry->expects($this->exactly(2))->method('markChunkRestored');
+
+        $file = $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/x.php.pam-staged', 'x', 1, 1));
+        $folder = $this->handler->restoreChunk($this->chunk('wp-content/plugins/a.pam-staged/x.php', 'x', 1, 1));
+
+        foreach ([$file, $folder] as $result) {
+            $this->assertTrue($result['skipped']);
+            $this->assertStringContainsString('reserved for staged files', $result['reason']);
+        }
+        $this->assertDirectoryDoesNotExist($this->stagedRoot() . 'wp-content');
+    }
+
+    public function testFileOutsideTheStagedRuleMayEndWithTheSuffix(): void
+    {
+        $result = $this->handler->restoreChunk($this->chunk('wp-content/uploads/export.pam-staged', 'x', 1, 1));
+
+        $this->assertSame('restored_file_chunk', $result['action']);
+        $this->assertSame('x', file_get_contents($this->abspath . 'wp-content/uploads/export.pam-staged'));
+    }
+
+    public function testStagedFilesOfTheHandlerMoveIntoPlace(): void
+    {
+        self::writeFile($this->abspath . 'wp-content/plugins/a/old.php', 'old');
+        $this->handler->restoreChunk($this->chunk('wp-content/plugins/a/new.php', 'new', 1, 1));
+
+        $result = $this->handler->staged()->moveIntoPlace();
+        $this->handler->staged()->finish();
+
+        $this->assertSame(1, $result['moved']);
+        $this->assertSame('new', file_get_contents($this->abspath . 'wp-content/plugins/a/new.php'));
+        $this->assertFileDoesNotExist($this->abspath . 'wp-content/plugins/a/old.php');
+        $this->assertDirectoryDoesNotExist($this->migrationDir . 'mig_1/replaced');
+    }
+
+    private function stagedRoot(): string
+    {
+        return $this->migrationDir . 'mig_1/staged/';
     }
 
     private function chunk(
@@ -391,46 +561,5 @@ final class FileRestoreHandlerTest extends TestCase
                 'chunks' => $chunks,
             ]],
         ]));
-    }
-
-    public function testCoreFilesTheSourceDoesNotHaveAreDeleted(): void
-    {
-        foreach (['wp-includes/version.php', 'wp-includes/old.php', 'wp-includes/gone/a.js', 'wp-admin/kept.php',
-            'wp-admin/old.php', 'wp-content/plugins/own/own.php', 'old-root.php'] as $path) {
-            self::writeFile($this->abspath . $path, 'x');
-        }
-
-        $removed = $this->handler->removeStaleCoreFiles(['wp-includes/version.php', 'wp-admin/kept.php']);
-
-        $this->assertSame(3, $removed);
-        $this->assertFileExists($this->abspath . 'wp-includes/version.php');
-        $this->assertFileExists($this->abspath . 'wp-admin/kept.php');
-        $this->assertFileDoesNotExist($this->abspath . 'wp-includes/old.php');
-        $this->assertFileDoesNotExist($this->abspath . 'wp-admin/old.php');
-        $this->assertDirectoryDoesNotExist($this->abspath . 'wp-includes/gone');
-        $this->assertFileExists($this->abspath . 'wp-content/plugins/own/own.php');
-        $this->assertFileExists($this->abspath . 'old-root.php');
-    }
-
-    public function testCoreIsLeftAloneWhenTheMigrationDidNotCarryIt(): void
-    {
-        self::writeFile($this->abspath . 'wp-includes/version.php', 'x');
-        self::writeFile($this->abspath . 'wp-admin/index.php', 'x');
-
-        $this->assertSame(0, $this->handler->removeStaleCoreFiles(['wp-content/uploads/a.jpg']));
-        $this->assertFileExists($this->abspath . 'wp-includes/version.php');
-        $this->assertFileExists($this->abspath . 'wp-admin/index.php');
-    }
-
-    public function testCoreCleanupDoesNotFollowSymlinks(): void
-    {
-        $outside = $this->createTemporaryDirectory();
-        self::writeFile($outside . 'keep.php', 'x');
-        self::writeFile($this->abspath . 'wp-includes/version.php', 'x');
-        symlink(rtrim($outside, '/'), $this->abspath . 'wp-includes/linked');
-
-        $this->handler->removeStaleCoreFiles(['wp-includes/version.php']);
-
-        $this->assertFileExists($outside . 'keep.php');
     }
 }

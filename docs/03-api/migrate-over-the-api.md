@@ -1,22 +1,22 @@
 # Migrate over the API
 
-The same migration can run without a browser. Another program, such as PanelAlpha, a script, or the bundled `migrate.php`, asks the source to prepare the migration, then asks it again and again to send the next batch until the whole site is on the destination. Nothing waits on an open tab, and each request is short.
+The same migration can run without a browser. Another program, such as PanelAlpha, a script, or `migrate.php` from the repository, asks the source to prepare the migration, then asks it again and again to send the next batch until the whole site is on the destination. Nothing waits on an open tab, and each request is short.
 
-This page is for whoever writes or runs that program. All requests go to the **source** site's WordPress REST API, under `/wp-json/wp-migrator/v1/`. The examples use `https://old-site.example.com` for the source and `https://new-site.example.com` for the destination.
+This page is for whoever writes or runs that program. All requests go to the **source** site's WordPress REST API, under `/wp-json/panelalpha-migrator/v1/`. The examples use `https://old-site.example.com` for the source and `https://new-site.example.com` for the destination.
 
 ## Before you start
 
 - The plugin is active on both sites, and you have the destination's address with its token: [Install the plugin](../01-getting-started/install.md#get-the-destination-address) and [Copy the address from the destination](../01-getting-started/migrate-a-site.md#1-copy-the-address-from-the-destination).
 - **The migration replaces the destination site.** See [What gets moved](../02-guides/what-gets-moved.md).
 - One migration at a time per source. The migration takes its place when `remote-sync` has prepared it, and gives it up when the last batch has finalized, or when the migration is stopped or fails. A second start is refused while one holds it, unless you pass `force`. A migration that has sent no piece for 15 minutes no longer holds it.
-- Every request to the source carries the **source's** token, from its **Migrator** page or its `config.php`, in the `X-Migrator-Token` header (or as `?token=`). It is not the destination's token inside `destination_url`. A request without it gets `401`, unless it comes from a logged-in administrator. A fresh copy of the plugin has no token: open **Migrator** on the source and select the download icon (**Destination**) once, which creates it.
+- Every request to the source carries the **source's** token, from its **Migrator** page, in the `X-Migrator-Token` header (or as `?token=`). It is not the destination's token inside `destination_url`. A request without it gets `401`, unless it comes from a logged-in administrator. A fresh copy of the plugin has no token: open **Migrator** on the source and select the download icon (**Destination**) once, which creates it.
 
 ## Start the migration
 
 The source lists every file and table, saves that list, and answers with a migration ID.
 
 ```bash
-curl -X POST "https://old-site.example.com/wp-json/wp-migrator/v1/remote-sync" \
+curl -X POST "https://old-site.example.com/wp-json/panelalpha-migrator/v1/remote-sync" \
   -H "Content-Type: application/json" \
   -H "X-Migrator-Token: <source-token>" \
   -d '{
@@ -43,8 +43,8 @@ What you should see:
 {
   "success": true,
   "migration_id": "mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5",
-  "status_url": "https://old-site.example.com/wp-json/wp-migrator/v1/remote-sync/status/mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5",
-  "process_batch_url": "https://old-site.example.com/wp-json/wp-migrator/v1/remote-sync/process-batch",
+  "status_url": "https://old-site.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5",
+  "process_batch_url": "https://old-site.example.com/wp-json/panelalpha-migrator/v1/remote-sync/process-batch",
   "status": "ready",
   "next_phase": "database",
   "table_prefix": "wp_",
@@ -56,7 +56,7 @@ What you should see:
 
 ### Destinations that are refused
 
-A destination on the same server or on a private network is refused with `400` and the code `destination_not_allowed`: "The destination address is not allowed." The check covers loopback, private, link-local and similar addresses. To allow one, list its host name or IP address in `allowed_destinations` in the source's `config.php`: [Destinations on a private network](../01-getting-started/install.md#destinations-on-a-private-network). Without `ip`, the destination's domain is looked up once and the first address is used for the whole migration, unless the host name is listed in `allowed_destinations`, which is trusted as it is. With `ip`, only that IP address is checked and the domain is not looked up.
+A destination on the same server or on a private network is refused with `400` and the code `destination_not_allowed`: "The destination address is not allowed." The check covers loopback, private, link-local and similar addresses. To allow one, list its host name or IP address in `allowed_destinations` in the setup file on the source: [Destinations on a private network](../01-getting-started/install.md#destinations-on-a-private-network). Without `ip`, the destination's domain is looked up once and the first address is used for the whole migration, unless the host name is listed in `allowed_destinations`, which is trusted as it is. With `ip`, only that IP address is checked and the domain is not looked up.
 
 ### HTTPS certificates
 
@@ -67,7 +67,7 @@ The source checks the destination's HTTPS certificate. If the destination has no
 Call `process-batch` with the migration ID until the answer contains `"finalized": true`. Each call sends up to `batch_size` pieces (default `50`). The database goes first, then the files. The source decides which comes next.
 
 ```bash
-curl -X POST "https://old-site.example.com/wp-json/wp-migrator/v1/remote-sync/process-batch" \
+curl -X POST "https://old-site.example.com/wp-json/panelalpha-migrator/v1/remote-sync/process-batch" \
   -H "Content-Type: application/json" \
   -H "X-Migrator-Token: <source-token>" \
   -d '{"migration_id": "mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5", "batch_size": 50}'
@@ -119,7 +119,7 @@ To resume after a failure, call `process-batch` again with the same `migration_i
 ## Check progress
 
 ```bash
-curl "https://old-site.example.com/wp-json/wp-migrator/v1/remote-sync/status/mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5" \
+curl "https://old-site.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5" \
   -H "X-Migrator-Token: <source-token>"
 ```
 
@@ -130,7 +130,7 @@ The answer has `status.percentage` for the whole migration, the progress of `dat
 The migration never sends the `.htaccess` file from the source's main folder. To give the destination the source's rules, call this after the migration has finished:
 
 ```bash
-curl -X POST "https://old-site.example.com/wp-json/wp-migrator/v1/transfer-htaccess" \
+curl -X POST "https://old-site.example.com/wp-json/panelalpha-migrator/v1/transfer-htaccess" \
   -H "Content-Type: application/json" \
   -H "X-Migrator-Token: <source-token>" \
   -d '{"migration_id": "mig_20260925_101500_3f9c2a7e5b1d48c6a0e2f4b6d8c1a3e5"}'
@@ -138,15 +138,15 @@ curl -X POST "https://old-site.example.com/wp-json/wp-migrator/v1/transfer-htacc
 
 **This overwrites the destination's `.htaccess`.** What you should see: `"transferred": true`. If the source has no `.htaccess`, the answer is `"transferred": false` with **No .htaccess file found on source**, and nothing changes on the destination.
 
-## The bundled script
+## The script in the repository
 
-`migrate.php` in the plugin folder runs the start and the batches for you and prints the progress. Run it from the source's plugin folder: it reads the source's token from `config.php` there and stops with **No token configured in config.php** when there is none. It needs PHP with cURL, and sends both the database and the files, without exclusions or an IP address.
+`migrate.php` runs the start and the batches for you and prints the progress. It is in the plugin's repository, not in the release zip, and runs only from the command line. Run it from any machine that can reach both sites, and give it the source's token as the second argument. It needs PHP with cURL, and sends both the database and the files, without exclusions or an IP address.
 
 ```bash
-php migrate.php "https://new-site.example.com?token=<token>" "https://old-site.example.com" 50
+php migrate.php "https://new-site.example.com?token=<destination_token>" <source_token> "https://old-site.example.com" 50
 ```
 
-The arguments are the destination address with its token, the source address (default `http://localhost`), and the batch size (default `50`). It ends with **Migration completed and finalized!** and the time it took, or with **✗ Error:** and the reason. The table and file counts it prints under **Summary** are always `0` in version 1.2.0; check the result on the destination instead.
+The arguments are the destination address with its token, the source's token, the source address (default `http://localhost`), and the batch size (default `50`). It ends with **Migration completed and finalized!** and the time it took, or with **✗ Error:** and the reason. The table and file counts it prints under **Summary** are always `0` in version 1.2.0; check the result on the destination instead.
 
 ## Troubleshooting
 
