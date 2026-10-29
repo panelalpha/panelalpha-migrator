@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
 
 final class MigrationLockTest extends TestCase
 {
@@ -15,8 +15,8 @@ final class MigrationLockTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->directory = sys_get_temp_dir() . '/wp-migrator-lock-test-' . bin2hex(random_bytes(6));
-        $this->lockFile = $this->directory . '/nested/wp-migrator-lock.php';
+        $this->directory = sys_get_temp_dir() . '/panelalpha-migrator-lock-test-' . bin2hex(random_bytes(6));
+        $this->lockFile = $this->directory . '/nested/panelalpha-migrator-lock.php';
     }
 
     protected function tearDown(): void
@@ -106,8 +106,8 @@ final class MigrationLockTest extends TestCase
 
     public function testOnlyOneOfTwoSimultaneousAcquiresWins(): void
     {
-        $autoload = dirname(__DIR__) . '/vendor/autoload.php';
-        $command = [PHP_BINARY, '-r', 'require $argv[1]; $lock = new WordpressMigrator\Helpers\MigrationLock($argv[2]); echo $lock->acquire($argv[3]) ? "win" : "lose";', $autoload, $this->lockFile];
+        $bootstrap = __DIR__ . '/bootstrap.php';
+        $command = [PHP_BINARY, '-r', 'require $argv[1]; $lock = new PanelAlpha\Migrator\Helpers\MigrationLock($argv[2]); echo $lock->acquire($argv[3]) ? "win" : "lose";', $bootstrap, $this->lockFile];
         $processes = [];
         $pipes = [];
 
@@ -219,14 +219,14 @@ final class MigrationLockTest extends TestCase
 
     public function testLockFromAnOlderVersionIsMovedAndStillHonored(): void
     {
-        $content = sys_get_temp_dir() . '/wp-migrator-content-' . bin2hex(random_bytes(6));
+        $content = sys_get_temp_dir() . '/panelalpha-migrator-content-' . bin2hex(random_bytes(6));
         mkdir($content);
-        $legacy = $content . '/wp-migrator-lock.json';
+        $legacy = $content . '/panelalpha-migrator-lock.json';
         file_put_contents($legacy, json_encode(['migration_id' => 'mig_old', 'timestamp' => time()]));
 
         $reflection = new \ReflectionClass(MigrationLock::class);
         $lock = $reflection->newInstanceWithoutConstructor();
-        foreach (['lockFile' => $content . '/wp-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
+        foreach (['lockFile' => $content . '/panelalpha-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
             $property = $reflection->getProperty($name);
             if (PHP_VERSION_ID < 80100) {
                 $property->setAccessible(true);
@@ -245,15 +245,15 @@ final class MigrationLockTest extends TestCase
 
     public function testJsonLockIsUsedWhenTheHostRefusesNewPhpFiles(): void
     {
-        $content = sys_get_temp_dir() . '/wp-migrator-content-' . bin2hex(random_bytes(6));
+        $content = sys_get_temp_dir() . '/panelalpha-migrator-content-' . bin2hex(random_bytes(6));
         mkdir($content);
         // A dangling symlink: the .php lock does not exist and cannot be created, as on WP Engine.
-        symlink($content . '/missing/target', $content . '/wp-migrator-lock.php');
-        $legacy = $content . '/wp-migrator-lock.json';
+        symlink($content . '/missing/target', $content . '/panelalpha-migrator-lock.php');
+        $legacy = $content . '/panelalpha-migrator-lock.json';
 
         $reflection = new \ReflectionClass(MigrationLock::class);
         $lock = $reflection->newInstanceWithoutConstructor();
-        foreach (['lockFile' => $content . '/wp-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
+        foreach (['lockFile' => $content . '/panelalpha-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
             $property = $reflection->getProperty($name);
             if (PHP_VERSION_ID < 80100) {
                 $property->setAccessible(true);
@@ -271,7 +271,7 @@ final class MigrationLockTest extends TestCase
         $this->assertFileDoesNotExist($legacy);
         $this->assertFalse($lock->isLocked());
 
-        unlink($content . '/wp-migrator-lock.php');
+        unlink($content . '/panelalpha-migrator-lock.php');
         rmdir($content);
     }
 }

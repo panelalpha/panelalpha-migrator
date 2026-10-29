@@ -1,12 +1,12 @@
 name: "Request a feature"
-description: "Have an idea that could make WordPress Migrator better? We'd love to hear it."
+description: "Have an idea that could make PanelAlpha Migrator better? We'd love to hear it."
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping shape WordPress Migrator!
+        Thanks for helping shape PanelAlpha Migrator!
 
         > Not sure yet, or want to talk it through first?
         > Bring it to our [Discord](https://discord.gg/9twHWR7xGX) or the

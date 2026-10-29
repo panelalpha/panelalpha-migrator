@@ -1,6 +1,6 @@
 <?php
 
-namespace WordpressMigrator\Restore;
+namespace PanelAlpha\Migrator\Restore;
 
 /**
  * Class FilePathConfinement

@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\DestinationNotAllowedException;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\DestinationNotAllowedException;
 
 final class DestinationGuardTest extends TestCase
 {
@@ -189,7 +189,7 @@ final class DestinationGuardTest extends TestCase
     {
         $guard = new DestinationGuard($this->resolverThatMustNotRun(), ['127.0.0.1']);
 
-        $guard->assertAllowed('http://127.0.0.1/restore.php');
+        $guard->assertAllowed('http://127.0.0.1/wp-json/panelalpha-migrator/v1/receive');
 
         $this->addToAssertionCount(1);
     }
@@ -198,7 +198,7 @@ final class DestinationGuardTest extends TestCase
     {
         $guard = new DestinationGuard($this->resolverThatMustNotRun(), ['LocalHost']);
 
-        $guard->assertAllowed('http://localhost/restore.php');
+        $guard->assertAllowed('http://localhost/wp-json/panelalpha-migrator/v1/receive');
 
         $this->addToAssertionCount(1);
     }

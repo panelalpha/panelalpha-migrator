@@ -2,38 +2,31 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
-use PDO;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Database;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\RecordingPdo;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\RecordingWpdb;
 
 final class DatabaseScannerTest extends TestCase
 {
-    private RecordingPdo $pdo;
+    private RecordingWpdb $wpdb;
     private DatabaseScanner $scanner;
 
     protected function setUp(): void
     {
-        if (!defined('DB_NAME')) {
-            define('DB_NAME', 'test_database');
-        }
-
-        $this->pdo = new RecordingPdo();
-        $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_OBJ);
-        $this->pdo->sqlite('CREATE TABLE wp_posts (id INTEGER PRIMARY KEY, slug TEXT, body TEXT)');
-        $this->pdo->sqlite('CREATE TABLE wp_empty (id INTEGER)');
-        $this->pdo->sqlite("INSERT INTO wp_posts VALUES (1, 'hello', 'first'), (2, 'world', 'second')");
-        FakeDatabase::install(new ScannerDatabase($this->pdo));
-        $this->scanner = new DatabaseScanner();
-    }
-
-    protected function tearDown(): void
-    {
-        FakeDatabase::reset();
+        $this->wpdb = new RecordingWpdb();
+        $this->wpdb->sqlite('CREATE TABLE wp_posts (id INTEGER PRIMARY KEY, slug TEXT, body TEXT)');
+        $this->wpdb->sqlite('CREATE TABLE wp_empty (id INTEGER)');
+        $this->wpdb->sqlite("INSERT INTO wp_posts VALUES (1, 'hello', 'first'), (2, 'world', 'second')");
+        $this->wpdb->varAnswers['SUM('] = '250';
+        $this->wpdb->varAnswers["table_name = 'wp_posts'"] = '250';
+        $this->wpdb->resultAnswers['SHOW INDEXES'] = [
+            ['Key_name' => 'PRIMARY', 'Column_name' => 'id', 'Non_unique' => 0],
+            ['Key_name' => 'slug_body', 'Column_name' => 'slug', 'Non_unique' => 0],
+            ['Key_name' => 'slug_body', 'Column_name' => 'body', 'Non_unique' => 0],
+        ];
+        $this->scanner = new DatabaseScanner($this->wpdb);
     }
 
     public function testScansAllTablesIncludingEmptyTable(): void
@@ -50,12 +43,21 @@ final class DatabaseScannerTest extends TestCase
         self::assertSame([1, 0, 100], [$byName['wp_posts']->chunks[0]->id, $byName['wp_posts']->chunks[0]->offset, $byName['wp_posts']->chunks[0]->limit]);
     }
 
+    public function testViewsAreNotScanned(): void
+    {
+        $this->wpdb->sqlite('CREATE VIEW wp_posts_view AS SELECT id FROM wp_posts');
+
+        $names = array_map(static fn ($table) => $table->name, $this->scanner->scan());
+
+        self::assertSame(['wp_empty', 'wp_posts'], $names);
+        self::assertContains("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'", $this->wpdb->queries);
+    }
+
     public function testSplitsRowsIntoHundredRowChunks(): void
     {
-        $this->pdo->sqlite('DELETE FROM wp_posts');
-        $insert = $this->pdo->prepare('INSERT INTO wp_posts (id) VALUES (?)');
+        $this->wpdb->sqlite('DELETE FROM wp_posts');
         foreach (range(1, 101) as $id) {
-            $insert->execute([$id]);
+            $this->wpdb->sqlite('INSERT INTO wp_posts (id) VALUES (' . $id . ')');
         }
 
         $posts = array_values(array_filter($this->scanner->scan(), static fn ($table) => $table->name === 'wp_posts'))[0];
@@ -82,9 +84,57 @@ final class DatabaseScannerTest extends TestCase
         self::assertSame(1, $chunk->actualRows);
     }
 
+    public function testReadsOnlyTheRequestedPageOfRows(): void
+    {
+        $this->scanner->getTableChunk('wp_posts', 100, 100);
+
+        self::assertContains('SELECT * FROM `wp_posts` LIMIT 100 OFFSET 100', $this->wpdb->queries);
+        self::assertSame(1, $this->wpdb->flushed);
+    }
+
+    public function testBinaryValuesAndNullsComeBackUnchanged(): void
+    {
+        $this->wpdb->sqlite('CREATE TABLE wp_big (id INTEGER, data BLOB, note TEXT)');
+        $this->wpdb->sqlite("INSERT INTO wp_big VALUES (1, X'00FF10', NULL)");
+
+        $chunk = $this->scanner->getTableChunk('wp_big', 0, 100);
+
+        self::assertSame("\x00\xFF\x10", $chunk->data[0][1]);
+        self::assertNull($chunk->data[0][2]);
+    }
+
+    public function testQuotesTableNames(): void
+    {
+        $this->wpdb->failOn = '`odd``name`';
+
+        try {
+            $this->scanner->getTableChunk('odd`name', 0, 1);
+            self::fail('The failed read must throw');
+        } catch (\RuntimeException $exception) {
+            self::assertStringContainsString('SHOW COLUMNS FROM `odd``name`', implode("\n", $this->wpdb->queries));
+        }
+    }
+
     public function testReturnsNullWhenCreateStatementIsMissing(): void
     {
         self::assertNull($this->scanner->getTableStructure('does_not_exist'));
+    }
+
+    public function testAFailedReadThrowsInsteadOfReturningNoRows(): void
+    {
+        $this->wpdb->failOn = 'SELECT * FROM';
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Database read failed: Simulated failure for: SELECT * FROM');
+
+        $this->scanner->getTableChunk('wp_posts', 0, 100);
+    }
+
+    public function testErrorPrintingIsRestoredAfterReading(): void
+    {
+        $this->scanner->getTableChunk('wp_posts', 0, 100);
+
+        self::assertFalse($this->wpdb->suppress);
     }
 
     public function testChecksumAndTotalSize(): void
@@ -93,57 +143,15 @@ final class DatabaseScannerTest extends TestCase
         self::assertSame(hash('sha256', json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE)), $this->scanner->getChecksum($data));
         self::assertSame(250, $this->scanner->getTotalSize());
     }
-}
 
-/** Supplies MySQL metadata while leaving table discovery and row reads on real SQLite. */
-final class ScannerDatabase extends Database
-{
-    private RecordingPdo $recordingPdo;
-
-    public function __construct(RecordingPdo $recordingPdo)
+    public function testTheGlobalWpdbIsUsedByDefault(): void
     {
-        $this->recordingPdo = $recordingPdo;
-    }
+        $GLOBALS['wpdb'] = $this->wpdb;
 
-    public function getPdo(): PDO
-    {
-        return $this->recordingPdo;
-    }
-
-    public function getRow(string $query, array $params = [])
-    {
-        if (str_contains($query, 'information_schema.TABLES')) {
-            if (str_contains($query, 'SUM(')) {
-                return (object) ['size' => 250];
-            }
-            return $params[1] === 'wp_posts' ? (object) ['size' => 250] : false;
+        try {
+            self::assertSame(250, (new DatabaseScanner())->getTotalSize());
+        } finally {
+            unset($GLOBALS['wpdb']);
         }
-        if (preg_match('/COUNT\(\*\).*FROM `([^`]+)`/', $query, $matches)) {
-            return (object) ['count' => (int) $this->recordingPdo->query('SELECT COUNT(*) FROM `' . $matches[1] . '`')->fetchColumn()];
-        }
-        throw new \LogicException('Unexpected query: ' . $query);
-    }
-
-    public function getResults(string $query, array $params = []): array
-    {
-        if (str_starts_with($query, 'SHOW COLUMNS')) {
-            return [(object) ['Field' => 'id'], (object) ['Field' => 'slug'], (object) ['Field' => 'body']];
-        }
-        if (str_starts_with($query, 'SHOW INDEXES')) {
-            return [
-                (object) ['Key_name' => 'PRIMARY', 'Column_name' => 'id', 'Non_unique' => 0],
-                (object) ['Key_name' => 'slug_body', 'Column_name' => 'slug', 'Non_unique' => 0],
-                (object) ['Key_name' => 'slug_body', 'Column_name' => 'body', 'Non_unique' => 0],
-            ];
-        }
-        throw new \LogicException('Unexpected query: ' . $query);
-    }
-
-    public function getVar(string $query, array $params = [])
-    {
-        if (str_contains($query, 'information_schema.TABLES')) {
-            return 250;
-        }
-        throw new \LogicException('Unexpected query: ' . $query);
     }
 }

@@ -1,17 +1,17 @@
 <?php
 
-namespace WordpressMigrator\Api\Controllers;
+namespace PanelAlpha\Migrator\Api\Controllers;
 
-use WordpressMigrator\Api\Middleware\RequestValidator;
-use WordpressMigrator\Api\Middleware\ResponseFormatter;
-use WordpressMigrator\Helpers\DestinationNotAllowedException;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncOrchestrationService;
+use PanelAlpha\Migrator\Api\Middleware\RequestValidator;
+use PanelAlpha\Migrator\Api\Middleware\ResponseFormatter;
+use PanelAlpha\Migrator\Helpers\DestinationNotAllowedException;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncOrchestrationService;
 
 /**
  * Remote sync orchestration controller.
  *
- * @package WordpressMigrator\Api\Controllers
+ * @package PanelAlpha\Migrator\Api\Controllers
  */
 class RemoteSyncOrchestrationController
 {

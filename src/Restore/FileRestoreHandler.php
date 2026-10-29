@@ -1,17 +1,20 @@
 <?php
 
-namespace WordpressMigrator\Restore;
+namespace PanelAlpha\Migrator\Restore;
 
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\Filesystem;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
 
 /**
  * Class FileRestoreHandler
  *
- * @package WordpressMigrator\Restore
+ * @package PanelAlpha\Migrator\Restore
  *
- * Handles the restoration of file chunks.
+ * Handles the restoration of file chunks. Code files are written to the
+ * staging folder and move into place at the end (see StagedFiles). Other
+ * files, such as uploads, are written in place.
  */
 class FileRestoreHandler
 {
@@ -19,71 +22,61 @@ class FileRestoreHandler
     private string $abspath;
     private array $excludedFiles;
     private FilePathConfinement $filePathConfinement;
+    private ?StagedFiles $staged;
 
     /**
      * FileRestoreHandler constructor.
      *
      * @param MigrationRegistry $registry
      * @param string            $abspath
+     * @param StagedFiles|null  $staged Built from the migration id when not given
      */
-    public function __construct(MigrationRegistry $registry, string $abspath)
+    public function __construct(MigrationRegistry $registry, string $abspath, ?StagedFiles $staged = null)
     {
         $this->registry = $registry;
         $this->abspath = $abspath;
+        $this->staged = $staged;
         $this->filePathConfinement = new FilePathConfinement();
         $this->excludedFiles = [
             'wp-config.php',
             '.htaccess',
             'wp-content/migrations/',
+            'wp-content/plugins/panelalpha-migrator/',
+            // The plugin folder before the rename in 1.2.1.
             'wp-content/plugins/wordpress-migrator/',
         ];
+
+        // This plugin's folder under the name it has on this site.
+        $ownPrefix = $this->ownPluginPrefix();
+
+        if ($ownPrefix !== null) {
+            $this->excludedFiles[] = $ownPrefix;
+        }
     }
 
     /**
-     * Deletes WordPress core files that the source does not have, so a
-     * destination on another WordPress version keeps none of its old core.
-     * Works only in wp-admin and wp-includes, and only when the migration
-     * carried the core (wp-includes/version.php is in the manifest).
+     * The staged files of this migration, to move into place at the end.
      *
-     * @param array $migratedPaths Relative paths of all files in the manifest
-     * @return int Number of deleted files
+     * @return StagedFiles
      */
-    public function removeStaleCoreFiles(array $migratedPaths): int
+    public function staged(): StagedFiles
     {
-        $migrated = array_flip(array_map(fn($path) => ltrim(str_replace('\\', '/', (string) $path), '/'), $migratedPaths));
-        $root = realpath($this->abspath);
+        if ($this->staged === null) {
+            $migrationId = (string) ($this->registry->getStatus()['migration_id'] ?? 'unknown');
 
-        if (!isset($migrated['wp-includes/version.php']) || $root === false) {
-            return 0;
-        }
-
-        $removed = 0;
-
-        foreach (['wp-admin', 'wp-includes'] as $directory) {
-            $base = $root . '/' . $directory;
-
-            if (!is_dir($base) || is_link($base)) {
-                continue;
+            if (!PathProvider::isSafeMigrationId($migrationId)) {
+                $migrationId = 'unknown';
             }
 
-            $items = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
+            $this->staged = new StagedFiles(
+                $this->abspath,
+                Filesystem::trailingSlashIt((string) Config::get('migration_dir')) . $migrationId,
+                $this->excludedFiles,
+                !empty($this->registry->getStatus()['keep_backup'])
             );
-
-            foreach ($items as $item) {
-                $path = $item->getPathname();
-
-                if ($item->isDir() && !$item->isLink()) {
-                    // Removes only folders left empty.
-                    @rmdir($path);
-                } elseif (!isset($migrated[substr($path, strlen($root) + 1)]) && @unlink($path)) {
-                    $removed++;
-                }
-            }
         }
 
-        return $removed;
+        return $this->staged;
     }
 
     /**
@@ -101,6 +94,14 @@ class FileRestoreHandler
             return $this->skipFile($chunkData, $filePath, 'Critical file excluded from restore');
         }
 
+        if ($this->staged()->isDestinationDropIn($filePath)) {
+            return $this->skipFile($chunkData, $filePath, 'Destination drop-in is kept');
+        }
+
+        if ($this->staged()->isStaged($filePath) && $this->staged()->hasReservedSuffix($filePath)) {
+            return $this->skipFile($chunkData, $filePath, 'File name ends with ' . StagedFiles::SUFFIX . ', which is reserved for staged files');
+        }
+
         $content = $chunkData['content'];
         $checksum = $chunkData['checksum'];
         $permissions = $chunkData['file']['permissions'];
@@ -109,7 +110,7 @@ class FileRestoreHandler
         $decodedContent = base64_decode($content);
 
         if ($decodedContent === false) {
-            throw new \Exception('Failed to decode file content for: ' . $filePath);
+            throw new \Exception(esc_html('Failed to decode file content for: ' . $filePath));
         }
 
         $this->validateChecksum($decodedContent, $checksum, $filePath);
@@ -123,11 +124,18 @@ class FileRestoreHandler
             ];
         }
 
-        $fullPath = $this->abspath . $filePath;
+        $staged = $this->staged()->isStaged($filePath);
+        $fullPath = $staged ? $this->staged()->stagedFilePath($filePath) : $this->abspath . $filePath;
         $directory = dirname($fullPath);
 
         try {
-            if ($this->resolvesOutsideRoot($fullPath)) {
+            if ($staged && !$this->staged()->ensureDirectories()) {
+                return $this->failChunk($filePath, 'Failed to create staging directory');
+            }
+
+            $roots = $staged ? [$this->staged()->stagedRoot()] : $this->staged()->liveRoots();
+
+            if ($this->staged()->resolvesOutsideRoots($fullPath, $roots)) {
                 return $this->failChunk($filePath, 'Path resolves outside the WordPress directory through a symlink');
             }
 
@@ -135,7 +143,7 @@ class FileRestoreHandler
                 return $this->failChunk($filePath, 'Failed to create directory: ' . $directory);
             }
 
-            if (!is_writable($directory)) {
+            if (!wp_is_writable($directory)) {
                 return $this->failChunk($filePath, 'Directory not writable: ' . $directory);
             }
 
@@ -158,6 +166,32 @@ class FileRestoreHandler
         } catch (\Throwable $e) {
             return $this->failChunk($filePath, 'Exception: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * The folder of this plugin as a lowercase path relative to the WordPress
+     * directory, from where the plugin runs. The folder name may differ from the default.
+     *
+     * @return string|null
+     */
+    private function ownPluginPrefix(): ?string
+    {
+        $own = realpath(PathProvider::getPluginDir());
+        $roots = ['' => $this->abspath];
+
+        if (defined('WP_CONTENT_DIR')) {
+            $roots['wp-content/'] = WP_CONTENT_DIR;
+        }
+
+        foreach ($roots as $prefix => $root) {
+            $root = realpath($root);
+
+            if ($own !== false && $root !== false && strpos($own, rtrim($root, '/') . '/') === 0) {
+                return strtolower($prefix . substr($own, strlen(rtrim($root, '/')) + 1)) . '/';
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -192,48 +226,8 @@ class FileRestoreHandler
         $actualChecksum = hash('sha256', $content);
 
         if ($actualChecksum !== $expectedChecksum) {
-            throw new \Exception('Checksum mismatch for file: ' . $filePath);
+            throw new \Exception(esc_html('Checksum mismatch for file: ' . $filePath));
         }
-    }
-
-    /**
-     * Looks at the disk: the target may be a symlink, or its nearest existing
-     * parent may be a symlink that leads out of the WordPress directory.
-     *
-     * @param string $fullPath
-     * @return bool
-     */
-    private function resolvesOutsideRoot(string $fullPath): bool
-    {
-        if (is_link($fullPath)) {
-            return true;
-        }
-
-        $root = realpath($this->abspath);
-
-        if ($root === false) {
-            return true;
-        }
-
-        $parent = dirname($fullPath);
-
-        while (!file_exists($parent)) {
-            if (is_link($parent)) {
-                return true;
-            }
-
-            $next = dirname($parent);
-
-            if ($next === $parent) {
-                return true;
-            }
-
-            $parent = $next;
-        }
-
-        $real = realpath($parent);
-
-        return $real === false || ($real !== $root && !str_starts_with($real, rtrim($root, '/') . '/'));
     }
 
     /**
@@ -278,7 +272,7 @@ class FileRestoreHandler
 
         $offset = (int) $chunkInfo['offset'];
         $total = (int) ($chunkInfo['total_chunks'] ?? $chunkNumber);
-        $handle = @fopen($fullPath, 'c+b');
+        $handle = @fopen($fullPath, 'c+b'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- writes one byte range of a file at its offset, which WP_Filesystem cannot do
 
         if ($handle === false) {
             return false;
@@ -289,7 +283,7 @@ class FileRestoreHandler
                 return false;
             }
 
-            $written = fwrite($handle, $content);
+            $written = fwrite($handle, $content); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- writes one byte range of a file at its offset, which WP_Filesystem cannot do
 
             if ($written !== strlen($content)) {
                 return false;
@@ -301,7 +295,7 @@ class FileRestoreHandler
 
             return true;
         } finally {
-            fclose($handle);
+            fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- writes one byte range of a file at its offset, which WP_Filesystem cannot do
         }
     }
 
@@ -319,11 +313,11 @@ class FileRestoreHandler
         $total = (int) ($chunkInfo['total_chunks'] ?? 0);
 
         if ($number < 1 || ($total > 0 && $number > $total)) {
-            throw new \Exception('Chunk number does not match the manifest for file: ' . $filePath);
+            throw new \Exception(esc_html('Chunk number does not match the manifest for file: ' . $filePath));
         }
 
         if (isset($chunkInfo['size']) && (int) $chunkInfo['size'] !== $length) {
-            throw new \Exception('Chunk size does not match the manifest for file: ' . $filePath);
+            throw new \Exception(esc_html('Chunk size does not match the manifest for file: ' . $filePath));
         }
 
         $expected = $this->registry->expectedFileChunk($filePath, $number);
@@ -338,7 +332,7 @@ class FileRestoreHandler
             || $length !== (int) $expected['size']
             || $number !== (int) $expected['chunk_number']
         ) {
-            throw new \Exception('Chunk offset, size, or number does not match the manifest for file: ' . $filePath);
+            throw new \Exception(esc_html('Chunk offset, size, or number does not match the manifest for file: ' . $filePath));
         }
     }
 
@@ -363,12 +357,17 @@ class FileRestoreHandler
      */
     private function finalizeFile(string $fullPath, string $permissions, ?string $modified): void
     {
-        @chmod($fullPath, octdec($permissions) & 0777);
+        $mode = (int) octdec($permissions) & 0777;
+
+        // WP_Filesystem_Direct::chmod() reads a mode of 0 as "use the default", which needs FS_CHMOD_FILE.
+        if ($mode !== 0) {
+            Filesystem::direct()->chmod($fullPath, $mode);
+        }
 
         if ($modified) {
             $timestamp = strtotime($modified);
             if ($timestamp) {
-                @touch($fullPath, $timestamp);
+                @Filesystem::direct()->touch($fullPath, $timestamp);
             }
         }
     }
@@ -426,12 +425,12 @@ class FileRestoreHandler
         $migrationsDir = Config::get('migration_dir');
 
         if (!file_exists($migrationsDir)) {
-            @mkdir($migrationsDir, 0755, true);
+            wp_mkdir_p($migrationsDir);
         }
 
         $migrationId = $this->registry->getStatus()['migration_id'] ?? 'unknown';
         $logFile = $migrationsDir . 'skipped_files_' . $migrationId . '.log';
-        $timestamp = date('Y-m-d H:i:s');
+        $timestamp = gmdate('Y-m-d H:i:s');
         $logEntry = "[{$timestamp}] {$label}: {$filePath} - Reason: {$reason}\n";
 
         @file_put_contents($logFile, $logEntry, FILE_APPEND);

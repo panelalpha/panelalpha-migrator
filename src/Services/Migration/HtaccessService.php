@@ -1,19 +1,19 @@
 <?php
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
 use Exception;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
 
 /**
  * Class HtaccessService
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Handles transferring and receiving .htaccess files between sites during migration.
  */
@@ -60,10 +60,7 @@ class HtaccessService
             throw new Exception('Failed to read .htaccess file');
         }
 
-        $endpointPretty = Filesystem::trailingSlashIt($destinationUrl) . 'wp-json/wp-migrator/v1/receive-htaccess';
-        $endpointRestRoute = rtrim($destinationUrl, '/');
-        $endpointRestRoute .= (strpos($endpointRestRoute, '?') !== false) ? '&' : '/?';
-        $endpointRestRoute .= 'rest_route=/wp-migrator/v1/receive-htaccess';
+        $endpoint = (new DestinationEndpoint($destinationUrl, DestinationEndpoint::modeFrom($migrationData)))->url('receive-htaccess');
 
         $headers = ['Content-Type' => 'application/json'];
         if (!empty($token)) {
@@ -87,27 +84,17 @@ class HtaccessService
 
         $httpArgs = array_merge($httpArgs, Http::tlsArgs($migrationData));
 
-        $response = Http::post($endpointPretty, $httpArgs);
+        $response = Http::post($endpoint, $httpArgs);
 
         if (Http::isError($response)) {
-            throw new Exception('Failed to transfer .htaccess: ' . $response->getErrorMessage());
+            throw new Exception(esc_html('Failed to transfer .htaccess: ' . $response->getErrorMessage()));
         }
 
         $statusCode = Http::retrieveResponseCode($response);
 
-        // Some servers do not route /wp-json/* when rewrites/permalinks are not configured.
-        // Fallback to the non-pretty REST route which works without mod_rewrite.
-        if ($statusCode === 404) {
-            $response = Http::post($endpointRestRoute, $httpArgs);
-            if (Http::isError($response)) {
-                throw new Exception('Failed to transfer .htaccess: ' . $response->getErrorMessage());
-            }
-            $statusCode = Http::retrieveResponseCode($response);
-        }
-
         if ($statusCode < 200 || $statusCode >= 300) {
             $responseBody = Http::retrieveBody($response);
-            throw new Exception('Destination returned error ' . $statusCode . ': ' . substr((string) $responseBody, 0, 300));
+            throw new Exception(esc_html('Destination returned error ' . $statusCode . ': ' . substr((string) $responseBody, 0, 300)));
         }
 
         return ['transferred' => true];

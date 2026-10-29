@@ -1,28 +1,22 @@
 <?php
 
-namespace WordpressMigrator\Services\RemoteSync;
+namespace PanelAlpha\Migrator\Services\RemoteSync;
 
 use Exception;
 use InvalidArgumentException;
-use WordpressMigrator\Api\Middleware\ResponseFormatter;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\Backup\ChunkHttpSender;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\DefaultExclusions;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
-use WordpressMigrator\Restore\WpConfigParser;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshake;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DefaultExclusions;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
 
 /**
  * Remote sync orchestration service.
  *
- * @package WordpressMigrator\Services\RemoteSync
+ * @package PanelAlpha\Migrator\Services\RemoteSync
  */
 class RemoteSyncOrchestrationService
 {
@@ -32,6 +26,7 @@ class RemoteSyncOrchestrationService
     private MigrationLock $lock;
     private DestinationGuard $destinationGuard;
     private MigrationStorageService $storageService;
+    private DestinationHandshake $handshake;
 
     /**
      * @param MigrationService $migrationService
@@ -40,6 +35,7 @@ class RemoteSyncOrchestrationService
      * @param MigrationLock|null $lock
      * @param DestinationGuard|null $destinationGuard
      * @param MigrationStorageService|null $storageService
+     * @param DestinationHandshake|null $handshake
      */
     public function __construct(
         MigrationService   $migrationService,
@@ -47,7 +43,8 @@ class RemoteSyncOrchestrationService
         ?RemoteSyncExecutor $executor = null,
         ?MigrationLock      $lock = null,
         ?DestinationGuard   $destinationGuard = null,
-        ?MigrationStorageService $storageService = null
+        ?MigrationStorageService $storageService = null,
+        ?DestinationHandshake $handshake = null
     )
     {
         $this->migrationService = $migrationService;
@@ -56,6 +53,7 @@ class RemoteSyncOrchestrationService
         $this->lock = $lock ?? new MigrationLock();
         $this->destinationGuard = $destinationGuard ?? new DestinationGuard();
         $this->storageService = $storageService ?? new MigrationStorageService();
+        $this->handshake = $handshake ?? new DestinationHandshake($this->destinationGuard, $this->storageService, $this->lock);
     }
 
     /**
@@ -77,11 +75,11 @@ class RemoteSyncOrchestrationService
 
         if ($this->lock->isLocked()) {
             $runningMigration = $this->lock->getLockInfo();
-            throw new Exception(
+            throw new Exception(esc_html(
                 'Another migration is already in progress. Migration ID: ' .
                 ($runningMigration['migration_id'] ?? 'unknown') .
                 '. Please wait for it to complete or cancel it first.'
-            );
+            ));
         }
 
         $parsed = $this->parseDestinationUrl($options['destination_url']);
@@ -98,6 +96,15 @@ class RemoteSyncOrchestrationService
         $backupFiles = filter_var($options['backup_files'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
         $insecureTls = filter_var($options['insecure_tls'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
 
+        // The destination has to run a compatible plugin before anything is scanned.
+        $restMode = $this->handshake->check([
+            'destinationUrl' => $destinationUrl,
+            'token' => $token,
+            'ip' => $manualIp,
+            'pinned_ip' => $pinnedIp,
+            'insecure_tls' => $insecureTls,
+        ]);
+
         $result = $this->migrationService->scanAndPrepareMigration(
             $destinationUrl,
             $exclusionsNewlineFormat,
@@ -107,7 +114,8 @@ class RemoteSyncOrchestrationService
             $backupDatabase,
             $backupFiles,
             $pinnedIp,
-            $insecureTls
+            $insecureTls,
+            $restMode
         );
 
         $migrationId = $result['migrationId'];
@@ -198,7 +206,7 @@ class RemoteSyncOrchestrationService
      */
     private function parseDestinationUrl(string $fullUrl): array
     {
-        $parsed = parse_url($fullUrl);
+        $parsed = wp_parse_url($fullUrl);
 
         if (!$parsed || empty($parsed['scheme']) || empty($parsed['host'])) {
             throw new InvalidArgumentException('Invalid destination URL format');
@@ -254,13 +262,13 @@ class RemoteSyncOrchestrationService
      * Get the URL of a plugin REST route.
      * WordPress knows the right form for the site, such as ?rest_route= without pretty permalinks.
      *
-     * @param string $route Route below wp-migrator/v1
+     * @param string $route Route below panelalpha-migrator/v1
      * @return string
      */
     private function getRestRouteUrl(string $route): string
     {
         if (function_exists('rest_url')) {
-            return rest_url('wp-migrator/v1/' . $route);
+            return rest_url('panelalpha-migrator/v1/' . $route);
         }
 
         $baseUrl = Config::get('base_url', '');
@@ -270,7 +278,7 @@ class RemoteSyncOrchestrationService
                 . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
         }
 
-        return rtrim($baseUrl, '/') . '/wp-json/wp-migrator/v1/' . $route;
+        return rtrim($baseUrl, '/') . '/wp-json/panelalpha-migrator/v1/' . $route;
     }
 
     /**
@@ -280,13 +288,11 @@ class RemoteSyncOrchestrationService
      */
     private function getTablePrefix(): string
     {
-        try {
-            $parser = new WpConfigParser(PathProvider::getAbsPath());
-            $config = $parser->parse();
-            return $config['table_prefix'] ?? 'wp_';
-        } catch (\Throwable $e) {
-            return 'wp_';
-        }
+        global $wpdb;
+
+        $prefix = is_object($wpdb) ? ($wpdb->base_prefix ?? '') : '';
+
+        return is_string($prefix) && $prefix !== '' ? $prefix : 'wp_';
     }
 
     public function processBatch(string $migrationId, int $batchSize = 50): array
@@ -302,7 +308,7 @@ class RemoteSyncOrchestrationService
         $phase = $this->determineCurrentPhase($backupStatus);
 
         if ($phase === 'database' || $phase === 'files') {
-            $this->ensureInfoSent($migrationId);
+            $this->handshake->sendInfo($migrationId);
         }
 
         if ($phase === 'database') {
@@ -331,11 +337,7 @@ class RemoteSyncOrchestrationService
                 && (($backupStatus['files']['status'] ?? null) === 'disabled');
 
             if ($result['completed'] && $filesDisabled && $this->shouldFinalize($migrationId)) {
-                $response['finalized'] = true;
-                $response['message'] = 'Migration completed and finalized successfully';
-                $response = $this->withSkippedFilesWarning($response, $this->finalizeWithDestination($migrationId));
-
-                return $response;
+                return $this->withFinalization($response, $this->finalizeWithDestination($migrationId));
             }
 
             $nextPhase = $this->determineNextPhaseForBatch($migrationId, 'database', $result['completed']);
@@ -375,9 +377,7 @@ class RemoteSyncOrchestrationService
             ];
 
             if ($shouldFinalize) {
-                $response['finalized'] = true;
-                $response['message'] = 'Migration completed and finalized successfully';
-                $response = $this->withSkippedFilesWarning($response, $this->finalizeWithDestination($migrationId));
+                $response = $this->withFinalization($response, $this->finalizeWithDestination($migrationId));
             } else {
                 $response['next_phase'] = $result['completed'] ? null : 'files';
             }
@@ -386,68 +386,20 @@ class RemoteSyncOrchestrationService
         }
 
         if ($phase === 'completed') {
+            $result = $this->finalizeWithDestination($migrationId);
+            $finalized = $this->isFinalized($result);
+
             return $this->withSkippedFilesWarning([
                 'migration_id' => $migrationId,
                 'phase' => 'completed',
                 'processed_chunks' => 0,
-                'finalized' => true,
+                'finalized' => $finalized,
                 'completed' => true,
-                'message' => 'Migration completed and finalized successfully',
-            ], $this->finalizeWithDestination($migrationId));
+                'message' => $this->finalizationMessage($finalized),
+            ], $result);
         }
 
-        throw new Exception('Invalid phase: ' . $phase);
-    }
-
-    /**
-     * Sends the info chunk to the destination once, before the first data chunk.
-     * The destination builds its manifest from it, and cannot finish without it.
-     * It is recorded as sent only after the destination confirms it.
-     *
-     * @param string $migrationId
-     * @throws Exception
-     */
-    private function ensureInfoSent(string $migrationId): void
-    {
-        $this->lock->exclusive($migrationId, function () use ($migrationId) {
-            $data = $this->storageService->loadMigrationData($migrationId);
-
-            if (!empty($data['info_sent'])) {
-                return;
-            }
-
-            $destinationUrl = $data['destinationUrl'] ?? $data['destination_url'] ?? $data['du'] ?? null;
-            $token = TokenHelper::forMigration($data);
-
-            if (empty($destinationUrl) || empty($token)) {
-                throw new Exception('Destination URL or token not found in migration data');
-            }
-
-            $ip = $data['ip'] ?? null;
-            $pinned = $data['pinned_ip'] ?? null;
-            if (!is_string($pinned) || $pinned === '') {
-                $pinned = $this->destinationGuard->assertAllowed(
-                    $destinationUrl,
-                    is_string($ip) && $ip !== '' ? $ip : null
-                );
-                $data['pinned_ip'] = $pinned;
-            }
-
-            $sender = new ChunkHttpSender(
-                $destinationUrl,
-                $token,
-                !empty($ip) ? $ip : $pinned,
-                (bool) ($data['base64'] ?? false),
-                Http::tlsArgs($data)
-            );
-
-            $info = $data;
-            $info['type'] = 'info';
-            $sender->send(MigrationInfoGenerator::withoutSecrets(ResponseFormatter::convertKeysToSnakeCase($info)));
-
-            $data['info_sent'] = true;
-            $this->storageService->saveMigrationData($migrationId, $data);
-        });
+        throw new Exception(esc_html('Invalid phase: ' . $phase));
     }
 
     private
@@ -485,12 +437,14 @@ class RemoteSyncOrchestrationService
         }
 
         if (!$this->lock->acquire($migrationId)) {
-            throw new Exception('Another migration is in progress. Migration ID: ' . ($heldBy ?? 'unknown'));
+            throw new Exception(esc_html('Another migration is in progress. Migration ID: ' . ($heldBy ?? 'unknown')));
         }
     }
 
     /**
      * Asks the destination to finalize and releases the lock only after it confirms.
+     * While the destination is still finishing, the lock stays and the result says finalized false,
+     * so the caller asks again with another process-batch call.
      *
      * @param string $migrationId
      * @return array
@@ -504,11 +458,49 @@ class RemoteSyncOrchestrationService
             throw new Exception('Destination did not confirm finalization');
         }
 
+        if (!$this->isFinalized($result)) {
+            return $result;
+        }
+
         if (!$this->lock->release($migrationId)) {
             throw new Exception('Migration lock could not be released');
         }
 
         return $result;
+    }
+
+    /**
+     * A result without the finalized field counts as finished.
+     *
+     * @param array $result
+     * @return bool
+     */
+    private function isFinalized(array $result): bool
+    {
+        return ($result['finalized'] ?? true) !== false;
+    }
+
+    private function finalizationMessage(bool $finalized): string
+    {
+        return $finalized
+            ? 'Migration completed and finalized successfully'
+            : 'Destination is still finishing the migration. Call process-batch again.';
+    }
+
+    /**
+     * Marks a batch response as finalized or still finishing, and adds the finalize result.
+     *
+     * @param array $response
+     * @param array $result
+     * @return array
+     */
+    private function withFinalization(array $response, array $result): array
+    {
+        $finalized = $this->isFinalized($result);
+        $response['finalized'] = $finalized;
+        $response['message'] = $this->finalizationMessage($finalized);
+
+        return $this->withSkippedFilesWarning($response, $result);
     }
 
     /**

@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
     use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
     use PHPUnit\Framework\TestCase;
     use ReflectionClass;
     use stdClass;
-    use WordpressMigrator\Api\RouteProvider;
-    use WordpressMigrator\Helpers\TokenHelper;
-    use WordpressMigrator\Tests\Support\TemporaryDirectory;
+    use PanelAlpha\Migrator\Api\RouteProvider;
+    use PanelAlpha\Migrator\Helpers\TokenHelper;
+    use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
     /**
      * @runTestsInSeparateProcesses
@@ -24,14 +24,14 @@ namespace WordpressMigrator\Tests;
         protected function setUp(): void
         {
             require __DIR__ . '/Support/RouteProviderWordPressFunctions.php';
-            $pluginDir = $this->createTemporaryDirectory();
-            file_put_contents($pluginDir . 'config.php', "<?php return ['token' => 'route-test-token'];");
-            define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+            require __DIR__ . '/Support/OptionStubs.php';
+            update_option(TokenHelper::TOKEN_OPTION, 'route-test-token', false);
+            define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
             $GLOBALS['route_provider_registered_routes'] = [];
             $GLOBALS['route_provider_admin'] = false;
             $reflection = new ReflectionClass(RouteProvider::class);
             $provider = $reflection->newInstanceWithoutConstructor();
-            foreach (['migrationController', 'backupController', 'restoreController', 'tokenController', 'remoteSyncOrchestrationController'] as $property) {
+            foreach (['migrationController', 'backupController', 'receiveController', 'tokenController', 'remoteSyncOrchestrationController'] as $property) {
                 $reflectionProperty = $reflection->getProperty($property);
                 if (PHP_VERSION_ID < 80100) {
                     $reflectionProperty->setAccessible(true);
@@ -47,8 +47,38 @@ namespace WordpressMigrator\Tests;
             self::assertCount(25, $this->routes);
             self::assertSame('POST', $this->route('/scan')['methods']);
             self::assertSame('GET', $this->route('/info')['methods']);
-            self::assertSame('POST', $this->route('/collect-chunk')['methods']);
             self::assertSame('GET', $this->route('/remote-sync/status/(?P<migration_id>[a-zA-Z0-9_]+)')['methods']);
+            self::assertSame('GET', $this->route('/receive/check')['methods']);
+            self::assertSame('POST', $this->route('/receive')['methods']);
+            self::assertSame('POST', $this->route('/receive/finalize')['methods']);
+            self::assertSame('GET', $this->route('/receive/status')['methods']);
+        }
+
+        public function testReceiveRoutesAcceptOnlyTheTokenInTheHeader(): void
+        {
+            require __DIR__ . '/Support/WordPressStubs.php';
+            $valid = new \WP_REST_Request([], ['X-Migrator-Token' => TokenHelper::getToken()]);
+            $routes = ['/receive/check', '/receive', '/receive/finalize', '/receive/status'];
+
+            foreach ($routes as $route) {
+                $permission = $this->route($route)['permission_callback'];
+                self::assertTrue($permission($valid), $route);
+                foreach ([
+                    new \WP_REST_Request(),
+                    new \WP_REST_Request([], ['X-Migrator-Token' => 'wrong']),
+                    new \WP_REST_Request(['token' => TokenHelper::getToken()]),
+                ] as $request) {
+                    $denied = $permission($request);
+                    self::assertInstanceOf(\WP_Error::class, $denied, $route);
+                    self::assertSame(401, $denied->get_error_data()['status'], $route);
+                }
+            }
+
+            // A logged-in administrator gets no way around the token, the source calls these routes, not a browser.
+            $GLOBALS['route_provider_admin'] = true;
+            foreach ($routes as $route) {
+                self::assertInstanceOf(\WP_Error::class, ($this->route($route)['permission_callback'])(new \WP_REST_Request()), $route);
+            }
         }
 
         public function testAdminOnlyRoutesRejectGuests(): void
@@ -71,7 +101,6 @@ namespace WordpressMigrator\Tests;
                 '/info', '/backup/database/next-chunk', '/backup/database/next-chunks-batch',
                 '/backup/database/progress', '/backup/files/next-chunk', '/backup/files/next-chunks-batch',
                 '/backup/files/progress', '/backup/status', '/backup/start', '/backup/stop',
-                '/restore/files/next-chunk', '/restore/database/next-chunk', '/restore/progress',
                 '/finalize', '/list-migrations', '/receive-htaccess',
             ];
 
@@ -86,7 +115,7 @@ namespace WordpressMigrator\Tests;
             }
         }
 
-        public function testCollectChunkAndOtherRoutesAcceptAdminOrValidToken(): void
+        public function testOtherRoutesAcceptAdminOrValidToken(): void
         {
             require __DIR__ . '/Support/WordPressStubs.php';
             $valid = new \WP_REST_Request([], ['X-Migrator-Token' => TokenHelper::getToken()]);
@@ -94,7 +123,7 @@ namespace WordpressMigrator\Tests;
             $invalid = new \WP_REST_Request([], ['X-Migrator-Token' => 'wrong']);
             $anonymous = new \WP_REST_Request();
             $routes = [
-                '/collect-chunk', '/migration-complete', '/remote-sync',
+                '/migration-complete', '/remote-sync',
                 '/remote-sync/status/(?P<migration_id>[a-zA-Z0-9_]+)',
                 '/remote-sync/process-batch', '/transfer-htaccess',
             ];
@@ -116,7 +145,7 @@ namespace WordpressMigrator\Tests;
 
         private function route(string $path): array
         {
-            $key = 'wp-migrator/v1' . $path;
+            $key = 'panelalpha-migrator/v1' . $path;
             self::assertArrayHasKey($key, $this->routes);
             return $this->routes[$key];
         }

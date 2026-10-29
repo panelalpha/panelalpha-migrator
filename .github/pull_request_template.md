@@ -1,5 +1,5 @@
 <!--
-Thanks for contributing to WordPress Migrator!
+Thanks for contributing to PanelAlpha Migrator!
 Please fill in the sections below. Keep the PR small and focused where you can.
 -->
 
@@ -38,7 +38,7 @@ so also say how you verified the change by hand, and on which WordPress, PHP and
 
 - [ ] My commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`)
 - [ ] I updated [`docs/`](https://github.com/panelalpha/panelalpha-wordpress-migrator/blob/main/docs/README.md) where a user would notice the change
-- [ ] I bumped the version in `wordpress-migrator.php` if this is a release
+- [ ] I bumped the version in `panelalpha-migrator.php` if this is a release
 - [ ] `composer.lock` is updated if I changed `composer.json`
 - [ ] This PR is focused on a single change
 - [ ] This does **not** contain a security fix that should be reported privately first

@@ -1,6 +1,6 @@
 <?php
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
 /**
  * Writes the migration file once per batch instead of after every chunk.

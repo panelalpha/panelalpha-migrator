@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests\Support;
+namespace PanelAlpha\Migrator\Tests\Support;
 
 use PHPUnit\Framework\Attributes\After;
 
@@ -15,7 +15,7 @@ trait TemporaryDirectory
 
     protected function createTemporaryDirectory(): string
     {
-        $directory = sys_get_temp_dir() . '/wp-migrator-test-' . bin2hex(random_bytes(6)) . '/';
+        $directory = sys_get_temp_dir() . '/panelalpha-migrator-test-' . bin2hex(random_bytes(6)) . '/';
         mkdir($directory, 0755, true);
         $this->temporaryDirectories[] = $directory;
 

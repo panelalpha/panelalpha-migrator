@@ -2,19 +2,18 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Scanner;
+namespace PanelAlpha\Migrator\Services\Scanner;
 
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Dto\IndexInfo;
-use WordpressMigrator\Dto\TableChunk;
-use WordpressMigrator\Dto\TableInfo;
-use WordpressMigrator\Dto\TableStructure;
-use WordpressMigrator\Helpers\Database;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Dto\IndexInfo;
+use PanelAlpha\Migrator\Dto\TableChunk;
+use PanelAlpha\Migrator\Dto\TableInfo;
+use PanelAlpha\Migrator\Dto\TableStructure;
 
 /**
  * Class DatabaseScanner
  *
- * @package WordpressMigrator\Services\Scanner
+ * @package PanelAlpha\Migrator\Services\Scanner
  *
  * Scans the database to gather information about tables.
  */
@@ -22,14 +21,16 @@ class DatabaseScanner
 {
     private const ROWS_PER_CHUNK = 100;
 
-    private Database $db;
+    private ?object $wpdb;
 
     /**
      * DatabaseScanner constructor.
+     *
+     * @param \wpdb|null $wpdb The global $wpdb when not given
      */
-    public function __construct()
+    public function __construct(?object $wpdb = null)
     {
-        $this->db = Database::getInstance();
+        $this->wpdb = $wpdb;
     }
 
     /**
@@ -54,14 +55,13 @@ class DatabaseScanner
     }
 
     /**
-     * Gets all tables from the database.
+     * Gets all tables from the database. Views are left out, they hold no rows of their own.
      *
      * @return array Array of table names
      */
     private function getAllTables(): array
     {
-        $stmt = $this->db->getPdo()->query('SHOW TABLES');
-        $tables = $stmt->fetchAll(\PDO::FETCH_NUM);
+        $tables = $this->results("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'", 'ARRAY_N');
         $tableNames = [];
 
         foreach ($tables as $table) {
@@ -101,15 +101,16 @@ class DatabaseScanner
      */
     private function getTableSize(string $tableName): int
     {
-        $sizeQuery = "SELECT
-                data_length + index_length as size
+        $sizeQuery = $this->wpdb()->prepare(
+            "SELECT data_length + index_length
             FROM information_schema.TABLES
-            WHERE table_schema = ?
-            AND table_name = ?";
+            WHERE table_schema = %s
+            AND table_name = %s",
+            $this->wpdb()->dbname,
+            $tableName
+        );
 
-        $sizeResult = $this->db->getRow($sizeQuery, [DB_NAME, $tableName]);
-
-        return $sizeResult ? (int)$sizeResult->size : 0;
+        return (int) $this->scalar($sizeQuery);
     }
 
     /**
@@ -120,10 +121,7 @@ class DatabaseScanner
      */
     private function getTableRowCount(string $tableName): int
     {
-        $countQuery = "SELECT COUNT(*) as count FROM `{$tableName}`";
-        $countResult = $this->db->getRow($countQuery);
-
-        return $countResult ? (int)$countResult->count : 0;
+        return (int) $this->scalar($this->wpdb()->prepare('SELECT COUNT(*) FROM %i', $tableName));
     }
 
     /**
@@ -182,14 +180,13 @@ class DatabaseScanner
      */
     private function getCreateTableStatement(string $tableName): ?string
     {
-        $stmt = $this->db->getPdo()->query("SHOW CREATE TABLE `{$tableName}`");
-        $createResult = $stmt->fetch(\PDO::FETCH_NUM);
+        $createResult = $this->results($this->wpdb()->prepare('SHOW CREATE TABLE %i', $tableName), 'ARRAY_N');
 
-        if (!$createResult) {
+        if ($createResult === []) {
             return null;
         }
 
-        return $createResult[1];
+        return $createResult[0][1];
     }
 
     /**
@@ -200,8 +197,7 @@ class DatabaseScanner
      */
     private function getTableIndexes(string $tableName): array
     {
-        $indexesQuery = "SHOW INDEXES FROM `{$tableName}`";
-        $indexesResult = $this->db->getResults($indexesQuery);
+        $indexesResult = $this->results($this->wpdb()->prepare('SHOW INDEXES FROM %i', $tableName));
 
         $indexes = [];
         $processedKeys = [];
@@ -291,8 +287,7 @@ class DatabaseScanner
      */
     private function getTableColumns(string $tableName): array
     {
-        $columnsQuery = "SHOW COLUMNS FROM `{$tableName}`";
-        $columnsResult = $this->db->getResults($columnsQuery);
+        $columnsResult = $this->results($this->wpdb()->prepare('SHOW COLUMNS FROM %i', $tableName));
 
         $columns = [];
         foreach ($columnsResult as $column) {
@@ -312,11 +307,9 @@ class DatabaseScanner
      */
     private function getTableData(string $tableName, int $offset, int $limit): ?array
     {
-        $dataQuery = "SELECT * FROM `{$tableName}` LIMIT {$limit} OFFSET {$offset}";
-        $stmt = $this->db->getPdo()->query($dataQuery);
-        $dataResult = $stmt->fetchAll(\PDO::FETCH_NUM);
+        $dataQuery = $this->wpdb()->prepare('SELECT * FROM %i LIMIT %d OFFSET %d', $tableName, $limit, $offset);
 
-        return $dataResult;
+        return $this->results($dataQuery, 'ARRAY_N', true);
     }
 
     /**
@@ -350,12 +343,107 @@ class DatabaseScanner
      */
     public function getTotalSize(): int
     {
-        $sizeQuery = "SELECT SUM(data_length + index_length) as size
+        $sizeQuery = $this->wpdb()->prepare(
+            "SELECT SUM(data_length + index_length)
             FROM information_schema.TABLES
-            WHERE table_schema = ?";
+            WHERE table_schema = %s",
+            $this->wpdb()->dbname
+        );
 
-        $result = $this->db->getRow($sizeQuery, [DB_NAME]);
+        return (int) $this->scalar($sizeQuery);
+    }
 
-        return $result ? (int)$result->size : 0;
+    /**
+     * Gets the database connection.
+     *
+     * @return \wpdb
+     */
+    private function wpdb(): object
+    {
+        return $this->wpdb ?? $GLOBALS['wpdb'];
+    }
+
+    /**
+     * Reads rows. A failed query throws.
+     *
+     * @param string $query SQL query
+     * @param string $output OBJECT or ARRAY_N
+     * @param bool   $flush Frees the result held by $wpdb, for queries that return many rows
+     * @return array Array of rows
+     * @throws \RuntimeException
+     */
+    private function results(string $query, string $output = 'OBJECT', bool $flush = false): array
+    {
+        return $this->read(function ($wpdb) use ($query, $output, $flush): array {
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- every caller passes a statement built with prepare()
+            $rows = $wpdb->get_results($query, $output);
+            $this->assertNoError($wpdb);
+
+            if ($flush) {
+                $wpdb->flush();
+            }
+
+            return is_array($rows) ? $rows : [];
+        });
+    }
+
+    /**
+     * Reads one value.
+     *
+     * @param string $query SQL query
+     * @return string|null Value or null
+     * @throws \RuntimeException
+     */
+    private function scalar(string $query)
+    {
+        return $this->read(function ($wpdb) use ($query) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- every caller passes a statement built with prepare()
+            $value = $wpdb->get_var($query);
+            $this->assertNoError($wpdb);
+
+            return $value;
+        });
+    }
+
+    /**
+     * Runs a read with the settings it needs, and puts them back afterwards.
+     * Database errors do not print into the response, and the connection speaks utf8mb4,
+     * otherwise 4-byte characters would be lost.
+     *
+     * @param callable $callback Receives $wpdb
+     * @return mixed
+     */
+    private function read(callable $callback)
+    {
+        $wpdb = $this->wpdb();
+        $suppressErrors = $wpdb->suppress_errors(true);
+        $charsetChanged = false;
+
+        try {
+            if ($wpdb->charset !== 'utf8mb4' && $wpdb->has_cap('utf8mb4')) {
+                $wpdb->set_charset($wpdb->dbh, 'utf8mb4', '');
+                $charsetChanged = true;
+            }
+
+            return $callback($wpdb);
+        } finally {
+            if ($charsetChanged) {
+                $wpdb->set_charset($wpdb->dbh);
+            }
+            $wpdb->suppress_errors($suppressErrors);
+        }
+    }
+
+    /**
+     * Throws when the last query failed, because $wpdb answers it with no rows.
+     *
+     * @param \wpdb $wpdb
+     * @throws \RuntimeException
+     */
+    private function assertNoError(object $wpdb): void
+    {
+        if ($wpdb->last_error !== '') {
+            throw new \RuntimeException(esc_html('Database read failed: ' . $wpdb->last_error));
+        }
     }
 }

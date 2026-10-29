@@ -54,7 +54,7 @@ body:
     id: plugin-version
     attributes:
       label: Plugin version
-      description: "Shown under WordPress Migrator on the Plugins page."
+      description: "Shown under PanelAlpha Migrator on the Plugins page."
       placeholder: "e.g. 1.1.4"
     validations:
       required: true

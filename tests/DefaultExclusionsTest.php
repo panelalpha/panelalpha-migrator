@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\RouteProvider;
-use WordpressMigrator\Helpers\DefaultExclusions;
-use WordpressMigrator\Helpers\ExclusionParser;
-use WordpressMigrator\Services\Scanner\FileExclusionService;
+use PanelAlpha\Migrator\Api\RouteProvider;
+use PanelAlpha\Migrator\Helpers\DefaultExclusions;
+use PanelAlpha\Migrator\Helpers\ExclusionParser;
+use PanelAlpha\Migrator\Services\Scanner\FileExclusionService;
 
 final class DefaultExclusionsTest extends TestCase
 {
-    private string $defaults = 'wp-config.php,wordpress-migrator,wp-content/plugins/wordpress-migrator';
+    private string $defaults = 'wp-config.php,panelalpha-migrator,wp-content/plugins/panelalpha-migrator,wordpress-migrator,wp-content/plugins/wordpress-migrator';
 
     public function testNoUserExclusionsGivesTheDefaults(): void
     {

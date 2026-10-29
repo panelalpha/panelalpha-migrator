@@ -7,7 +7,7 @@ A migration copies the source site's database and files into the destination and
 - The plugin is installed and active on both sites, and you opened **Destination** on the destination at least once, which creates its token: [Install the plugin](install.md).
 - **The migration replaces the destination site.** Each table the source has is deleted on the destination and recreated from the source. Files with the same path are overwritten. If the destination holds anything you want to keep, back it up first. There is no undo.
 - After the migration, you log in to the destination with the source site's usernames and passwords.
-- Your browser sends the first message to the destination itself, so the destination address must open in the browser you use, as well as from the source server.
+- The source server sends everything to the destination, so the destination address must open from the source server.
 
 ## 1. Copy the address from the destination
 
@@ -60,7 +60,7 @@ Your browser could not reach the destination. Open the destination address in a 
 The token was replaced on the destination after you copied the address. Copy the current address from the destination and start again.
 
 **"The destination address is not allowed."**
-The destination, or the IP address you entered, is on the same server or on a private network, which the source refuses by default. If that is what you want, list it in `allowed_destinations`: [Destinations on a private network](install.md#destinations-on-a-private-network).
+The destination, or the IP address you entered, is on the same server or on a private network, which the source refuses by default. If that is what you want, list it in `allowed_destinations` in the setup file: [Destinations on a private network](install.md#destinations-on-a-private-network).
 
 **"Another migration is in progress. Wait for it to finish before scanning."**
 A migration on this source is still running, or it was left open and has not yet timed out. A migration that sends nothing for 15 minutes stops blocking a new one. To end it sooner, open **Migrator** in the browser that started it and select **Stop Backup**: [Stop and resume](../02-guides/stop-and-resume.md).
@@ -77,7 +77,5 @@ The source cannot reach the destination, or a single request took longer than tw
 ### The new domain does not point at the destination yet
 
 If the domain still points at the old server, the source would send the site there instead of to the destination. Enter the destination server's IP address in **Destination IP Address (Optional)**, for example `203.0.113.10`, and paste the address with the final domain as usual. The plugin connects to that IP address and still asks for the domain, so the destination site answers and the database gets the final domain. If the address has a port, such as `https://new-site.example.com:8443?token=<token>`, the plugin connects to that IP address on that port. The IP address is checked once when the migration starts, and every later request goes to it. Afterwards, point the domain at the destination server.
-
-The first message of a dashboard migration is sent by your browser, which does not use the IP address. TODO: confirm with team that a dashboard migration works while the domain still points at the old server.
 
 **The destination has no valid HTTPS certificate for the domain yet.** A certificate is usually issued only after the domain points at the server, so an HTTPS address sent to an IP address fails the certificate check. Tick **Do not verify the HTTPS certificate (only with a manual IP)**, which is under the IP field and can be ticked only when an IP address is entered. The migration then sends without checking the certificate, so use it only for a destination you control and only until the domain and its certificate are in place. It applies to this one migration. Without an IP address the checkbox does nothing.

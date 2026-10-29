@@ -1,23 +1,25 @@
 <?php
 
-namespace WordpressMigrator\Api\Controllers;
+namespace PanelAlpha\Migrator\Api\Controllers;
 
 use Exception;
-use WordpressMigrator\Api\Middleware\InvalidRequestException;
-use WordpressMigrator\Api\Middleware\RequestValidator;
-use WordpressMigrator\Api\Middleware\ResponseFormatter;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\DestinationNotAllowedException;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Services\Migration\HtaccessService;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Api\Middleware\InvalidRequestException;
+use PanelAlpha\Migrator\Api\Middleware\RequestValidator;
+use PanelAlpha\Migrator\Api\Middleware\ResponseFormatter;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\DestinationNotAllowedException;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshake;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshakeException;
+use PanelAlpha\Migrator\Services\Migration\HtaccessService;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
 
 /**
  * Class MigrationController
  *
- * @package WordpressMigrator\Api\Controllers
+ * @package PanelAlpha\Migrator\Api\Controllers
  *
  * Handles migration-related API requests.
  */
@@ -28,6 +30,7 @@ class MigrationController
     private $migrationService;
     private $htaccessService;
     private DestinationGuard $destinationGuard;
+    private DestinationHandshake $handshake;
 
     /**
      * MigrationController constructor.
@@ -37,19 +40,22 @@ class MigrationController
      * @param RequestValidator|null $requestValidator
      * @param ResponseFormatter|null $responseFormatter
      * @param DestinationGuard|null $destinationGuard
+     * @param DestinationHandshake|null $handshake
      */
     public function __construct(
         MigrationService $migrationService,
         ?HtaccessService $htaccessService = null,
         ?RequestValidator $requestValidator = null,
         ?ResponseFormatter $responseFormatter = null,
-        ?DestinationGuard $destinationGuard = null
+        ?DestinationGuard $destinationGuard = null,
+        ?DestinationHandshake $handshake = null
     ) {
         $this->migrationService = $migrationService;
         $this->htaccessService = $htaccessService ?? new HtaccessService();
         $this->requestValidator = $requestValidator ?? new RequestValidator();
         $this->responseFormatter = $responseFormatter ?? new ResponseFormatter();
         $this->destinationGuard = $destinationGuard ?? new DestinationGuard();
+        $this->handshake = $handshake ?? new DestinationHandshake($this->destinationGuard);
     }
 
     /**
@@ -90,6 +96,15 @@ class MigrationController
 
             $pinnedIp = $this->destinationGuard->assertAllowed($destinationUrl, is_string($ip) ? $ip : null);
 
+            // The destination has to run a compatible plugin before anything is scanned.
+            $restMode = $this->handshake->check([
+                'destinationUrl' => $destinationUrl,
+                'token' => $token,
+                'ip' => $ip,
+                'pinned_ip' => $pinnedIp,
+                'insecure_tls' => $insecureTls,
+            ]);
+
             $result = $this->migrationService->scanAndPrepareMigration(
                 $destinationUrl,
                 $exclusions,
@@ -99,7 +114,8 @@ class MigrationController
                 $backupDatabase,
                 $backupFiles,
                 $pinnedIp,
-                $insecureTls
+                $insecureTls,
+                $restMode
             );
 
             $response = [
@@ -112,6 +128,8 @@ class MigrationController
             return $this->responseFormatter->success($response);
         } catch (DestinationNotAllowedException $e) {
             return $this->responseFormatter->error('destination_not_allowed', $e->getMessage(), ['status' => 400]);
+        } catch (DestinationHandshakeException $e) {
+            return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (InvalidRequestException $e) {
             return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (Exception $e) {
@@ -170,6 +188,16 @@ class MigrationController
 
             if (!is_array($response) || empty($response['success'])) {
                 throw new Exception('Destination did not confirm finalization');
+            }
+
+            // The destination is still finishing: keep the lock and let the caller ask again.
+            if (($response['finalized'] ?? true) === false) {
+                return $this->responseFormatter->success([
+                    'success' => true,
+                    'finalized' => false,
+                    'message' => 'Destination is still finishing the migration',
+                    'response' => $response
+                ]);
             }
 
             if (!(new MigrationLock())->release($migrationId)) {

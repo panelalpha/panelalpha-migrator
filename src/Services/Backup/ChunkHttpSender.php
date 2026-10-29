@@ -2,22 +2,22 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
-use WordpressMigrator\Helpers\Filesystem;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
 
 /**
  * Class ChunkHttpSender
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Handles sending backup chunks to the destination server via HTTP.
  */
 class ChunkHttpSender
 {
-    private string $destinationUrl;
+    private DestinationEndpoint $endpoint;
     private string $authToken;
     private ?string $ip;
     private bool $useBase64;
@@ -31,10 +31,11 @@ class ChunkHttpSender
      * @param string|null $ip Optional IP address to override host
      * @param bool $useBase64 Whether to use base64 encoding for requests
      * @param array $tlsArgs Extra Http::post arguments for TLS, from Http::tlsArgs()
+     * @param string $restMode DestinationEndpoint mode saved when the destination was checked
      */
-    public function __construct(string $destinationUrl, string $authToken, ?string $ip = null, bool $useBase64 = false, array $tlsArgs = [])
+    public function __construct(string $destinationUrl, string $authToken, ?string $ip = null, bool $useBase64 = false, array $tlsArgs = [], string $restMode = DestinationEndpoint::MODE_PRETTY)
     {
-        $this->destinationUrl = $destinationUrl;
+        $this->endpoint = new DestinationEndpoint($destinationUrl, $restMode);
         $this->authToken = $authToken;
         $this->ip = $ip;
         $this->useBase64 = $useBase64;
@@ -74,8 +75,7 @@ class ChunkHttpSender
      */
     private function buildEndpoint(): string
     {
-        return Filesystem::trailingSlashIt($this->destinationUrl) 
-            . 'wp-content/plugins/wordpress-migrator/restore.php?action=collect-and-restore';
+        return $this->endpoint->url('receive');
     }
 
     /**
@@ -83,7 +83,7 @@ class ChunkHttpSender
      *
      * @param string $endpoint Target endpoint URL
      * @param array  $chunkData Data to send
-     * @return \WordpressMigrator\Helpers\HttpResponse|\WordpressMigrator\Helpers\HttpError
+     * @return \PanelAlpha\Migrator\Helpers\HttpResponse|\PanelAlpha\Migrator\Helpers\HttpError
      */
     private function sendHttpRequest(string $endpoint, array $chunkData)
     {
@@ -111,7 +111,7 @@ class ChunkHttpSender
      *
      * @param string $endpoint Target endpoint URL
      * @param array  $chunkData Data to send
-     * @return \WordpressMigrator\Helpers\HttpResponse|\WordpressMigrator\Helpers\HttpError
+     * @return \PanelAlpha\Migrator\Helpers\HttpResponse|\PanelAlpha\Migrator\Helpers\HttpError
      */
     private function sendHttpRequestBase64(string $endpoint, array $chunkData)
     {
@@ -149,14 +149,14 @@ class ChunkHttpSender
     private function validateResponse($response, array $chunkData): void
     {
         if (Http::isError($response)) {
-            throw new \Exception('Failed to send chunk: ' . $response->getErrorMessage());
+            throw new \Exception(esc_html('Failed to send chunk: ' . $response->getErrorMessage()));
         }
 
         $statusCode = Http::retrieveResponseCode($response);
         $body = Http::retrieveBody($response);
 
         if ($statusCode < 200 || $statusCode >= 300) {
-            throw new \Exception('Destination returned error: ' . $statusCode . ' - ' . substr((string) $body, 0, 300));
+            throw new \Exception(esc_html('Destination returned error: ' . $statusCode . ' - ' . substr((string) $body, 0, 300)));
         }
 
         $decoded = json_decode($body, true);
@@ -177,7 +177,7 @@ class ChunkHttpSender
 
         if (is_array($result) && (!empty($result['failed']) || !empty($result['can_retry']))) {
             $reason = $result['reason'] ?? 'chunk was not delivered';
-            throw new \Exception('Destination did not deliver the chunk: ' . $reason);
+            throw new \Exception(esc_html('Destination did not deliver the chunk: ' . $reason));
         }
     }
 }

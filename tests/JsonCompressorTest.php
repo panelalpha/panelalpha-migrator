@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
 
 final class JsonCompressorTest extends TestCase
 {

@@ -2,28 +2,30 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Dto\FileChunkInfo;
-use WordpressMigrator\Dto\FileInfo;
-use WordpressMigrator\Dto\TableInfo;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\Database;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Dto\FileChunkInfo;
+use PanelAlpha\Migrator\Dto\FileInfo;
+use PanelAlpha\Migrator\Dto\TableInfo;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Tests\Support\RecordingWpdb;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class MigrationInfoGeneratorTest extends TestCase
 {
     use ResetsGlobalState;
     use TemporaryDirectory;
 
+    private RecordingWpdb $wpdb;
+
     protected function setUp(): void
     {
-        FakeDatabase::install(new MigrationInfoDatabase());
+        $this->wpdb = new RecordingWpdb();
+        $this->wpdb->varAnswers['VERSION()'] = '8.0.36';
         Config::set('wp_version', '6.8.3');
         Config::set('site_url', 'https://old.example.com');
         Config::set('home_url', 'https://old.example.com/blog');
@@ -31,14 +33,14 @@ final class MigrationInfoGeneratorTest extends TestCase
 
     public function testGeneratesMigrationWithAccurateTotalsAndSourceMetadata(): void
     {
-        $GLOBALS['table_prefix'] = 'custom_';
+        $this->wpdb->base_prefix = 'custom_';
         $files = [
             new FileInfo('a.txt', 5, '644', 'now', [new FileChunkInfo(1, 0, 5)], 1),
             new FileInfo('b.bin', 8, '644', 'now', [new FileChunkInfo(1, 0, 4), new FileChunkInfo(2, 4, 4)], 2),
         ];
         $tables = [new TableInfo('custom_posts', 400, 101, [new ChunkInfo(1, 0, 100), new ChunkInfo(2, 100, 100)], 2)];
 
-        $migration = (new MigrationInfoGenerator())->generate($files, $tables, 'https://new.example.com');
+        $migration = (new MigrationInfoGenerator($this->wpdb))->generate($files, $tables, 'https://new.example.com');
 
         self::assertMatchesRegularExpression('/^mig_\d{8}_\d{6}_[a-f0-9]{32}$/', $migration->migrationId);
         self::assertLessThanOrEqual(2, abs(time() - strtotime($migration->timestamp)));
@@ -72,7 +74,7 @@ final class MigrationInfoGeneratorTest extends TestCase
 
     public function testTwoGenerationsInTheSameSecondDoNotShareAnId(): void
     {
-        $generator = new MigrationInfoGenerator();
+        $generator = new MigrationInfoGenerator($this->wpdb);
 
         $first = $generator->generate([], [], 'https://new.example.com')->migrationId;
         $second = $generator->generate([], [], 'https://new.example.com')->migrationId;
@@ -80,14 +82,9 @@ final class MigrationInfoGeneratorTest extends TestCase
         $this->assertNotSame($first, $second);
     }
 
-    public function testEmptyMigrationAndPrefixFromWpConfig(): void
+    public function testEmptyMigrationAndDefaultPrefix(): void
     {
-        $root = $this->createTemporaryDirectory();
-        self::writeFile($root . 'wp-config.php', "<?php\ndefine('DB_NAME', 'test');\ndefine('DB_USER', 'test');\ndefine('DB_HOST', 'localhost');\n\$table_prefix = 'parsed_';\n");
-        Config::set('root_path', $root);
-        unset($GLOBALS['table_prefix']);
-
-        $migration = (new MigrationInfoGenerator())->generate([], [], 'https://new.example.com');
+        $migration = (new MigrationInfoGenerator($this->wpdb))->generate([], [], 'https://new.example.com');
 
         self::assertSame([0, 0, 0, 0, 0, 0, 0, 0], [
             $migration->summary->totalFiles,
@@ -99,7 +96,7 @@ final class MigrationInfoGeneratorTest extends TestCase
             $migration->summary->fileChunks,
             $migration->summary->dbChunks,
         ]);
-        self::assertSame('parsed_', $migration->sourceTablePrefix);
+        self::assertSame('wp_', $migration->sourceTablePrefix);
     }
 
     public function testFormatsSizes(): void
@@ -108,18 +105,5 @@ final class MigrationInfoGeneratorTest extends TestCase
         self::assertSame('1 KB', MigrationInfoGenerator::formatSize(1024));
         self::assertSame('1.5 MB', MigrationInfoGenerator::formatSize(1572864));
         self::assertSame('0 B', MigrationInfoGenerator::formatSize(-1));
-    }
-}
-
-final class MigrationInfoDatabase extends Database
-{
-    public function __construct() {}
-
-    public function getVar(string $query, array $params = [])
-    {
-        if ($query !== 'SELECT VERSION()') {
-            throw new \LogicException('Unexpected query: ' . $query);
-        }
-        return '8.0.36';
     }
 }

@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Services\Scanner\FileScanner;
-use WordpressMigrator\Services\Scanner\FileScannerConfig;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Services\Scanner\FileScanner;
+use PanelAlpha\Migrator\Services\Scanner\FileScannerConfig;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class FileScannerTest extends TestCase
 {
@@ -81,7 +81,7 @@ final class FileScannerTest extends TestCase
         }
 
         $root = $this->createTemporaryDirectory();
-        $outside = sys_get_temp_dir() . '/wp-migrator-outside-' . bin2hex(random_bytes(4));
+        $outside = sys_get_temp_dir() . '/panelalpha-migrator-outside-' . bin2hex(random_bytes(4));
         mkdir($outside);
         $outsideFile = $outside . '/secret.txt';
         file_put_contents($outsideFile, 'secret');

@@ -9,25 +9,29 @@
     let currentBackupType = null;
     let currentMode = 'source'; // 'source' or 'destination'
 
+    // The destination can still be finishing when it answers finalize. Ask again every few seconds.
+    const FINALIZE_RETRY_DELAY = 3000;
+    const FINALIZE_MAX_RETRIES = 20;
+
     // Mode Management
     function loadModeFromStorage() {
-        return localStorage.getItem('wpMigrator_mode') || 'source';
+        return localStorage.getItem('panelalphaMigrator_mode') || 'source';
     }
 
     function saveModeToStorage(mode) {
-        localStorage.setItem('wpMigrator_mode', mode);
+        localStorage.setItem('panelalphaMigrator_mode', mode);
     }
 
     function loadDestinationUrlFromStorage() {
-        return localStorage.getItem('wpMigrator_destinationUrl') || '';
+        return localStorage.getItem('panelalphaMigrator_destinationUrl') || '';
     }
 
     function saveDestinationUrlToStorage(url) {
-        localStorage.setItem('wpMigrator_destinationUrl', url);
+        localStorage.setItem('panelalphaMigrator_destinationUrl', url);
     }
 
     function forgetDestinationUrl() {
-        localStorage.removeItem('wpMigrator_destinationUrl');
+        localStorage.removeItem('panelalphaMigrator_destinationUrl');
     }
 
     function switchMode(mode) {
@@ -50,9 +54,9 @@
     }
 
     function applyDestinationToken(token, showSuccess) {
-        const urlWithToken = wpMigrator.siteUrl + '?token=' + token;
+        const urlWithToken = panelalphaMigrator.siteUrl + '?token=' + token;
         $('#destination-url-display').val(urlWithToken);
-        wpMigrator.token = token;
+        panelalphaMigrator.token = token;
         if (showSuccess) {
             showSuccessMessage('New token generated successfully!');
         }
@@ -62,10 +66,10 @@
         const showSuccess = !!(options && options.showSuccess);
 
         $.ajax({
-            url: wpMigrator.restUrl + '/token/generate-and-save',
+            url: panelalphaMigrator.restUrl + '/token/generate-and-save',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             contentType: 'application/json',
             success: function(response) {
@@ -83,10 +87,10 @@
 
     function loadDestinationModeData() {
         $.ajax({
-            url: wpMigrator.restUrl + '/token/current',
+            url: panelalphaMigrator.restUrl + '/token/current',
             method: 'GET',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             success: function(response) {
                 if (response.success && response.token) {
@@ -169,10 +173,10 @@
         initEventHandlers();
 
         // Check if mode switcher should be shown
-        if (!wpMigrator.showModeSwitcher) {
+        if (!panelalphaMigrator.showModeSwitcher) {
             $('#mode-selection-section').hide();
             // Use mode from .env, not localStorage
-            currentMode = wpMigrator.mode || 'source';
+            currentMode = panelalphaMigrator.mode || 'source';
         } else {
             // Load saved mode from localStorage
             currentMode = loadModeFromStorage();
@@ -269,7 +273,7 @@
             return;
         }
 
-        wpMigrator.token = token;
+        panelalphaMigrator.token = token;
 
         if (backupInProgress && migrationData && migrationData.migration_id) {
             backupInProgress = false;
@@ -310,7 +314,7 @@
 
         const requestData = {
             destination_url: destinationUrl,
-            token: wpMigrator.token,  // Add token from URL
+            token: panelalphaMigrator.token,  // Add token from URL
             backup_database: $('#backup-database').is(':checked'),
             backup_files: $('#backup-files').is(':checked')
         };
@@ -325,10 +329,10 @@
         }
 
         $.ajax({
-            url: wpMigrator.restUrl + '/scan',
+            url: panelalphaMigrator.restUrl + '/scan',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify(requestData),
             contentType: 'application/json',
@@ -350,7 +354,7 @@
 
         // Store start time for duration calculation
         window.migrationStartTime = Date.now();
-        localStorage.setItem('wpMigrator_startTime', window.migrationStartTime.toString());
+        localStorage.setItem('panelalphaMigrator_startTime', window.migrationStartTime.toString());
 
         $('#progress-section').hide();
 
@@ -388,7 +392,7 @@
     function showError(message) {
         const errorSection = $('#error-section');
         errorSection.html(`
-            <div class="wp-migrator-section">
+            <div class="panelalpha-migrator-section">
                 <div class="notice notice-error">
                     <p><strong>${escapeHtml(message)}</strong></p>
                 </div>
@@ -404,7 +408,7 @@
     function showSuccessMessage(message) {
         const errorSection = $('#error-section');
         errorSection.html(`
-            <div class="wp-migrator-section">
+            <div class="panelalpha-migrator-section">
                 <div class="notice notice-success is-dismissible">
                     <p><strong>${escapeHtml(message)}</strong></p>
                 </div>
@@ -471,14 +475,14 @@
         const summary = migrationData.summary;
 
         // Check what was actually backed up
-        const completedBackupTypes = localStorage.getItem('wpMigrator_completedBackupTypes') || '';
+        const completedBackupTypes = localStorage.getItem('panelalphaMigrator_completedBackupTypes') || '';
         const backupDatabase = completedBackupTypes.includes('database');
         const backupFiles = completedBackupTypes.includes('files');
 
         // Calculate duration from localStorage times
         let duration = '-';
-        const startTime = localStorage.getItem('wpMigrator_startTime');
-        const completionTime = localStorage.getItem('wpMigrator_completionTime');
+        const startTime = localStorage.getItem('panelalphaMigrator_startTime');
+        const completionTime = localStorage.getItem('panelalphaMigrator_completionTime');
 
         if (startTime && completionTime) {
             const durationSeconds = (parseInt(completionTime) - parseInt(startTime)) / 1000;
@@ -536,10 +540,10 @@
 
             // Clear localStorage
             clearBackupStateFromLocalStorage();
-            localStorage.removeItem('wpMigrator_migrationComplete');
-            localStorage.removeItem('wpMigrator_completionTime');
-            localStorage.removeItem('wpMigrator_startTime');
-            localStorage.removeItem('wpMigrator_completedBackupTypes');
+            localStorage.removeItem('panelalphaMigrator_migrationComplete');
+            localStorage.removeItem('panelalphaMigrator_completionTime');
+            localStorage.removeItem('panelalphaMigrator_startTime');
+            localStorage.removeItem('panelalphaMigrator_completedBackupTypes');
 
             // Reset buttons
             $('#start-scan').prop('disabled', false);
@@ -594,7 +598,7 @@
         }
 
         if (token) {
-            wpMigrator.token = token;
+            panelalphaMigrator.token = token;
         }
 
         const backupDatabase = $('#backup-database').is(':checked');
@@ -623,16 +627,10 @@
         $('#start-backup').prop('disabled', true);
         $('#backup-progress-section').fadeIn();
 
-        updateBackupProgress(0, 'Starting backup...', 'dashicons-backup');
+        updateBackupProgress(0, 'Starting backup and sending migration info to destination...', 'dashicons-backup');
 
         startBackupOnServer(migrationData.migration_id, function() {
-            updateBackupProgress(0, 'Sending migration info to destination...', 'dashicons-backup');
-
-            sendMigrationInfoToDestination(destinationUrl, function() {
-                processNextBackupInQueue();
-            }, function(error) {
-                handleBackupError('Failed to send migration info: ' + error);
-            });
+            processNextBackupInQueue();
         }, function(errorMessage) {
             handleBackupError(errorMessage);
         });
@@ -665,12 +663,12 @@
         stopBackupOnServer(migrationData.migration_id, true, function() {
             finalizeMigration(migrationData.migration_id, function() {
                 const completionTime = Date.now();
-                localStorage.setItem('wpMigrator_migrationComplete', 'true');
-                localStorage.setItem('wpMigrator_completionTime', completionTime.toString());
+                localStorage.setItem('panelalphaMigrator_migrationComplete', 'true');
+                localStorage.setItem('panelalphaMigrator_completionTime', completionTime.toString());
 
-                const savedBackupType = localStorage.getItem('wpMigrator_lastBackupType');
+                const savedBackupType = localStorage.getItem('panelalphaMigrator_lastBackupType');
                 if (savedBackupType) {
-                    localStorage.setItem('wpMigrator_completedBackupTypes', savedBackupType);
+                    localStorage.setItem('panelalphaMigrator_completedBackupTypes', savedBackupType);
                 }
 
                 $('#backup-progress-section').fadeOut(function() {
@@ -727,7 +725,7 @@
         }
 
         if (token) {
-            wpMigrator.token = token;
+            panelalphaMigrator.token = token;
         }
 
         saveBackupStateToLocalStorage(migrationData.migration_id, 'database');
@@ -738,16 +736,10 @@
 
         $('#backup-progress-bar-fill').css('width', '0%');
         $('#backup-progress-percentage').text('0%');
-        $('#backup-progress-message').text('Starting backup...');
+        $('#backup-progress-message').text('Starting backup and sending migration info to destination...');
 
         startBackupOnServer(migrationData.migration_id, function() {
-            $('#backup-progress-message').text('Sending migration info to destination...');
-
-            sendMigrationInfoToDestination(destinationUrl, function() {
-                sendNextDatabaseChunk(migrationData.migration_id);
-            }, function(error) {
-                handleDatabaseBackupError({ responseJSON: { message: 'Failed to send migration info: ' + error } });
-            });
+            sendNextDatabaseChunk(migrationData.migration_id);
         }, function(errorMessage) {
             handleDatabaseBackupError({ responseJSON: { message: errorMessage } });
         });
@@ -759,10 +751,10 @@
         }
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/database/next-chunks-batch',
+            url: panelalphaMigrator.restUrl + '/backup/database/next-chunks-batch',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationId,
@@ -808,10 +800,10 @@
 
     function updateDatabaseBackupProgress(migrationId) {
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/database/progress',
+            url: panelalphaMigrator.restUrl + '/backup/database/progress',
             method: 'GET',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: {
                 migration_id: migrationId
@@ -883,7 +875,7 @@
         }
 
         if (token) {
-            wpMigrator.token = token;
+            panelalphaMigrator.token = token;
         }
 
         saveBackupStateToLocalStorage(migrationData.migration_id, 'files');
@@ -894,16 +886,10 @@
 
         $('#files-backup-progress-bar-fill').css('width', '0%');
         $('#files-backup-progress-percentage').text('0%');
-        $('#files-backup-progress-message').text('Starting backup...');
+        $('#files-backup-progress-message').text('Starting backup and sending migration info to destination...');
 
         startBackupOnServer(migrationData.migration_id, function() {
-            $('#files-backup-progress-message').text('Sending migration info to destination...');
-
-            sendMigrationInfoToDestination(destinationUrl, function() {
-                sendNextFileChunk(migrationData.migration_id);
-            }, function(error) {
-                handleFilesBackupError({ responseJSON: { message: 'Failed to send migration info: ' + error } });
-            });
+            sendNextFileChunk(migrationData.migration_id);
         }, function(errorMessage) {
             handleFilesBackupError({ responseJSON: { message: errorMessage } });
         });
@@ -915,10 +901,10 @@
         }
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/files/next-chunks-batch',
+            url: panelalphaMigrator.restUrl + '/backup/files/next-chunks-batch',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationId,
@@ -964,10 +950,10 @@
 
     function updateFilesBackupProgress(migrationId) {
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/files/progress',
+            url: panelalphaMigrator.restUrl + '/backup/files/progress',
             method: 'GET',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: {
                 migration_id: migrationId
@@ -1019,79 +1005,6 @@
         $('#start-files-backup').prop('disabled', false);
     }
 
-    function sendMigrationInfoToDestination(destinationUrl, successCallback, errorCallback) {
-        $.ajax({
-            url: wpMigrator.restUrl + '/info',
-            method: 'GET',
-            beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
-            },
-            data: {
-                migration_id: migrationData.migration_id
-            },
-            success: function(migrationInfo) {
-                sendToDestination(destinationUrl, migrationInfo, successCallback, errorCallback);
-            },
-            error: function() {
-                errorCallback('Failed to load migration info from source');
-            }
-        });
-    }
-
-    function sendToDestination(destinationUrl, chunkData, successCallback, errorCallback) {
-        const baseUrl = destinationUrl.replace(/\/$/, '');
-
-        const standaloneUrl = baseUrl + '/wp-content/plugins/wordpress-migrator/restore.php?action=collect-and-restore';
-
-        $.ajax({
-            url: standaloneUrl,
-            method: 'POST',
-            data: JSON.stringify(chunkData),
-            contentType: 'application/json',
-            headers: {
-                'X-Migrator-Token': wpMigrator.token || ''
-            },
-            success: function(response) {
-                if (response.success || response.status === 'received') {
-                    successCallback();
-                } else {
-                    errorCallback('Destination did not acknowledge chunk');
-                }
-            },
-            error: function(xhr) {
-                const restUrl = baseUrl + '/wp-json/wp-migrator/v1/collect-chunk';
-
-                $.ajax({
-                    url: restUrl,
-                    method: 'POST',
-                    data: JSON.stringify(chunkData),
-                    contentType: 'application/json',
-                    headers: {
-                        'X-Migrator-Token': wpMigrator.token || ''
-                    },
-                    success: function(response) {
-                        if (response.status === 'received') {
-                            successCallback();
-                        } else {
-                            errorCallback('Destination did not acknowledge chunk');
-                        }
-                    },
-                    error: function(xhr2) {
-                        let errorMsg = 'Failed to send chunk to destination';
-                        if (xhr2.responseJSON && xhr2.responseJSON.message) {
-                            errorMsg = xhr2.responseJSON.message;
-                        } else if (xhr2.responseText) {
-                            errorMsg += ': ' + xhr2.responseText;
-                        } else if (xhr.responseText) {
-                            errorMsg += ': ' + xhr.responseText;
-                        }
-                        errorCallback(errorMsg);
-                    }
-                });
-            }
-        });
-    }
-
     function backupRequestError(xhr, fallback) {
         if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
             return xhr.responseJSON.message;
@@ -1099,13 +1012,14 @@
         return fallback;
     }
 
-    // Takes the migration lock on the server. Chunks are sent only after this succeeds.
+    // Takes the migration lock on the server, which also sends the migration info to the destination.
+    // Chunks are sent only after this succeeds.
     function startBackupOnServer(migrationId, onSuccess, onError) {
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/start',
+            url: panelalphaMigrator.restUrl + '/backup/start',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationId
@@ -1123,10 +1037,10 @@
     // keepLock is true only right before finalize, which releases the lock itself.
     function stopBackupOnServer(migrationId, keepLock, onSuccess, onError) {
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/stop',
+            url: panelalphaMigrator.restUrl + '/backup/stop',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationId,
@@ -1152,24 +1066,41 @@
         }
     }
 
-    function finalizeMigration(migrationId, onSuccess) {
+    function finalizeMigration(migrationId, onSuccess, retries) {
+        retries = retries || 0;
 
         $.ajax({
-            url: wpMigrator.restUrl + '/finalize',
+            url: panelalphaMigrator.restUrl + '/finalize',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationId
             }),
             contentType: 'application/json',
             success: function(response) {
+                if (response && response.success && response.finalized === false) {
+                    if (retries < FINALIZE_MAX_RETRIES) {
+                        setTimeout(function() {
+                            finalizeMigration(migrationId, onSuccess, retries + 1);
+                        }, FINALIZE_RETRY_DELAY);
+                        return;
+                    }
+
+                    forgetDestinationUrl();
+                    releaseBackupOnError();
+                    localStorage.removeItem('panelalphaMigrator_migrationComplete');
+                    localStorage.removeItem('panelalphaMigrator_completionTime');
+                    showError('Destination is still finishing the migration. Check its status later.');
+                    return;
+                }
+
                 forgetDestinationUrl();
                 if (response && response.success) {
                     if (response.warning && response.skipped_files && response.skipped_files.length) {
                         $('#error-section').html(`
-                            <div class="wp-migrator-section">
+                            <div class="panelalpha-migrator-section">
                                 <div class="notice notice-warning is-dismissible">
                                     <p><strong>${escapeHtml(response.warning)} (${response.skipped_files.length} skipped files)</strong></p>
                                 </div>
@@ -1182,15 +1113,15 @@
                     return;
                 }
 
-                localStorage.removeItem('wpMigrator_migrationComplete');
-                localStorage.removeItem('wpMigrator_completionTime');
+                localStorage.removeItem('panelalphaMigrator_migrationComplete');
+                localStorage.removeItem('panelalphaMigrator_completionTime');
                 showError('Migration finalization failed');
             },
             error: function(xhr) {
                 forgetDestinationUrl();
                 releaseBackupOnError();
-                localStorage.removeItem('wpMigrator_migrationComplete');
-                localStorage.removeItem('wpMigrator_completionTime');
+                localStorage.removeItem('panelalphaMigrator_migrationComplete');
+                localStorage.removeItem('panelalphaMigrator_completionTime');
                 showError(backupRequestError(xhr, 'Migration finalization failed'));
             }
         });
@@ -1198,17 +1129,17 @@
 
 
     function checkForInterruptedMigration() {
-        const lastMigrationId = localStorage.getItem('wpMigrator_lastMigrationId');
-        const migrationComplete = localStorage.getItem('wpMigrator_migrationComplete');
+        const lastMigrationId = localStorage.getItem('panelalphaMigrator_lastMigrationId');
+        const migrationComplete = localStorage.getItem('panelalphaMigrator_migrationComplete');
 
         // Check if migration is completed
         if (migrationComplete === 'true' && lastMigrationId) {
             // Load migration data and show complete screen
             $.ajax({
-                url: wpMigrator.restUrl + '/info',
+                url: panelalphaMigrator.restUrl + '/info',
                 method: 'GET',
                 beforeSend: function(xhr) {
-                    xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                    xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
                 },
                 data: {
                     migration_id: lastMigrationId
@@ -1223,8 +1154,8 @@
                 },
                 error: function() {
                     // If can't load data, clear the complete flag
-                    localStorage.removeItem('wpMigrator_migrationComplete');
-                    localStorage.removeItem('wpMigrator_completionTime');
+                    localStorage.removeItem('panelalphaMigrator_migrationComplete');
+                    localStorage.removeItem('panelalphaMigrator_completionTime');
                 }
             });
             return;
@@ -1235,10 +1166,10 @@
         }
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/status',
+            url: panelalphaMigrator.restUrl + '/backup/status',
             method: 'GET',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: {
                 migration_id: lastMigrationId
@@ -1311,10 +1242,10 @@
 
     function loadAndShowInterruptedMigration(migrationId) {
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/status',
+            url: panelalphaMigrator.restUrl + '/backup/status',
             method: 'GET',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: {
                 migration_id: migrationId
@@ -1388,7 +1319,7 @@
             return;
         }
 
-        wpMigrator.token = token;
+        panelalphaMigrator.token = token;
 
         migrationData = {
             migration_id: interruptedMigrationData.migration_id
@@ -1422,11 +1353,7 @@
         updateBackupProgress(0, 'Resuming backup...', 'dashicons-backup');
 
         startBackupOnServer(migrationData.migration_id, function() {
-            sendMigrationInfoToDestination(destinationUrl, function() {
-                processNextBackupInQueue();
-            }, function(error) {
-                handleBackupError('Failed to send migration info: ' + error);
-            });
+            processNextBackupInQueue();
         }, function(errorMessage) {
             handleBackupError(errorMessage);
         });
@@ -1447,7 +1374,7 @@
         }
 
         if (token) {
-            wpMigrator.token = token;
+            panelalphaMigrator.token = token;
         }
 
         migrationData = {
@@ -1486,7 +1413,7 @@
         }
 
         if (token) {
-            wpMigrator.token = token;
+            panelalphaMigrator.token = token;
         }
 
         migrationData = {
@@ -1524,10 +1451,10 @@
         backupQueue = [];
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/stop',
+            url: panelalphaMigrator.restUrl + '/backup/stop',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationData.migration_id
@@ -1554,10 +1481,10 @@
         backupInProgress = false;
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/stop',
+            url: panelalphaMigrator.restUrl + '/backup/stop',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationData.migration_id
@@ -1584,10 +1511,10 @@
         backupInProgress = false;
 
         $.ajax({
-            url: wpMigrator.restUrl + '/backup/stop',
+            url: panelalphaMigrator.restUrl + '/backup/stop',
             method: 'POST',
             beforeSend: function(xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', wpMigrator.nonce);
+                xhr.setRequestHeader('X-WP-Nonce', panelalphaMigrator.nonce);
             },
             data: JSON.stringify({
                 migration_id: migrationData.migration_id
@@ -1603,20 +1530,20 @@
     }
 
     function saveBackupStateToLocalStorage(migrationId, backupType) {
-        localStorage.setItem('wpMigrator_lastMigrationId', migrationId);
-        localStorage.setItem('wpMigrator_lastBackupType', backupType);
+        localStorage.setItem('panelalphaMigrator_lastMigrationId', migrationId);
+        localStorage.setItem('panelalphaMigrator_lastBackupType', backupType);
     }
 
     function clearBackupStateFromLocalStorage(backupType) {
         if (backupType) {
-            const savedType = localStorage.getItem('wpMigrator_lastBackupType');
+            const savedType = localStorage.getItem('panelalphaMigrator_lastBackupType');
             if (savedType === backupType) {
-                localStorage.removeItem('wpMigrator_lastMigrationId');
-                localStorage.removeItem('wpMigrator_lastBackupType');
+                localStorage.removeItem('panelalphaMigrator_lastMigrationId');
+                localStorage.removeItem('panelalphaMigrator_lastBackupType');
             }
         } else {
-            localStorage.removeItem('wpMigrator_lastMigrationId');
-            localStorage.removeItem('wpMigrator_lastBackupType');
+            localStorage.removeItem('panelalphaMigrator_lastMigrationId');
+            localStorage.removeItem('panelalphaMigrator_lastBackupType');
         }
     }
 

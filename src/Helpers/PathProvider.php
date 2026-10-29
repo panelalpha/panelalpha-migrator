@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class PathProvider
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
  * Provides centralized access to file system paths, abstracting WordPress constants.
  */
@@ -20,8 +20,8 @@ class PathProvider
      */
     public static function getMigrationDir(): string
     {
-        if (defined('WP_MIGRATOR_MIGRATION_DIR')) {
-            return WP_MIGRATOR_MIGRATION_DIR;
+        if (defined('PANELALPHA_MIGRATOR_MIGRATION_DIR')) {
+            return PANELALPHA_MIGRATOR_MIGRATION_DIR;
         }
 
         return Config::get('migration_dir', self::getPluginDir() . 'migrations/');
@@ -34,8 +34,8 @@ class PathProvider
      */
     public static function getPluginDir(): string
     {
-        if (defined('WP_MIGRATOR_PLUGIN_DIR')) {
-            return WP_MIGRATOR_PLUGIN_DIR;
+        if (defined('PANELALPHA_MIGRATOR_PLUGIN_DIR')) {
+            return PANELALPHA_MIGRATOR_PLUGIN_DIR;
         }
 
         return Config::get('plugin_dir', dirname(__DIR__, 2) . '/');
@@ -48,8 +48,8 @@ class PathProvider
      */
     public static function getPluginUrl(): string
     {
-        if (defined('WP_MIGRATOR_PLUGIN_URL')) {
-            return WP_MIGRATOR_PLUGIN_URL;
+        if (defined('PANELALPHA_MIGRATOR_PLUGIN_URL')) {
+            return PANELALPHA_MIGRATOR_PLUGIN_URL;
         }
 
         return Config::get('plugin_url', '');
@@ -115,8 +115,8 @@ class PathProvider
      */
     public static function getVersion(): string
     {
-        if (defined('WP_MIGRATOR_VERSION')) {
-            return WP_MIGRATOR_VERSION;
+        if (defined('PANELALPHA_MIGRATOR_VERSION')) {
+            return PANELALPHA_MIGRATOR_VERSION;
         }
 
         return Config::get('version', '1.0.0');

@@ -2,30 +2,32 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Api\Controllers\MigrationController;
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Dto\Migration;
-use WordpressMigrator\Dto\MigrationSummary;
-use WordpressMigrator\Dto\TableInfo;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\Migration\HtaccessService;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationService;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Api\Controllers\MigrationController;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Dto\Migration;
+use PanelAlpha\Migrator\Dto\MigrationSummary;
+use PanelAlpha\Migrator\Dto\TableInfo;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshake;
+use PanelAlpha\Migrator\Services\Migration\DestinationHandshakeException;
+use PanelAlpha\Migrator\Services\Migration\HtaccessService;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Services\Migration\MigrationService;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * @runTestsInSeparateProcesses
@@ -38,9 +40,14 @@ final class MigrationControllerTest extends TestCase
     use ResetsGlobalState;
     use TemporaryDirectory;
 
+    /** @var DestinationHandshake&\PHPUnit\Framework\MockObject\MockObject */
+    private $handshake;
+
     protected function setUp(): void
     {
         require_once __DIR__ . '/Support/WordPressStubs.php';
+        $this->handshake = $this->createMock(DestinationHandshake::class);
+        $this->handshake->method('check')->willReturn('pretty');
     }
 
     public function testScanPassesOptionsAndConvertsSummaryKeys(): void
@@ -142,6 +149,48 @@ final class MigrationControllerTest extends TestCase
 
         $this->assertSame('destination_not_allowed', $response->get_error_code());
         $this->assertSame('The destination address is not allowed.', $response->get_error_message());
+        $this->assertSame(['status' => 400], $response->get_error_data());
+    }
+
+    public function testScanChecksTheDestinationFirstAndSavesTheRestMode(): void
+    {
+        $this->handshake = $this->createMock(DestinationHandshake::class);
+        $this->handshake->expects($this->once())->method('check')->with([
+            'destinationUrl' => 'https://destination.example',
+            'token' => 'secret',
+            'ip' => '8.8.4.4',
+            'pinned_ip' => '8.8.4.4',
+            'insecure_tls' => true,
+        ])->willReturn('plain');
+        $service = $this->createMock(MigrationService::class);
+        $service->expects($this->once())->method('scanAndPrepareMigration')
+            ->with('https://destination.example', null, 'secret', '8.8.4.4', false, true, true, '8.8.4.4', true, 'plain')
+            ->willReturn(['migrationId' => 'mig_1', 'migrationData' => ['summary' => []]]);
+
+        $this->controller($service)->scan(new \WP_REST_Request(
+            ['destination_url' => 'https://destination.example'],
+            [],
+            ['token' => 'secret', 'ip' => '8.8.4.4', 'insecure_tls' => true]
+        ));
+    }
+
+    public function testScanStopsWhenTheDestinationIsIncompatible(): void
+    {
+        $this->handshake = $this->createMock(DestinationHandshake::class);
+        $this->handshake->method('check')->willThrowException(
+            new DestinationHandshakeException('destination_incompatible', 'Destination does not have PanelAlpha Migrator 1.2.1 or newer active.')
+        );
+        $service = $this->createMock(MigrationService::class);
+        $service->expects($this->never())->method('scanAndPrepareMigration');
+
+        $response = $this->controller($service)->scan(new \WP_REST_Request(
+            ['destination_url' => 'https://destination.example'],
+            [],
+            ['token' => 'secret']
+        ));
+
+        $this->assertSame('destination_incompatible', $response->get_error_code());
+        $this->assertSame('Destination does not have PanelAlpha Migrator 1.2.1 or newer active.', $response->get_error_message());
         $this->assertSame(['status' => 400], $response->get_error_data());
     }
 
@@ -322,6 +371,25 @@ final class MigrationControllerTest extends TestCase
 
         $this->assertSame('finalize_failed', $response->get_error_code());
         $this->assertSame('Destination did not confirm finalization', $response->get_error_message());
+        $this->assertTrue($lock->isLocked());
+    }
+
+    public function testFinalizeKeepsTheLockWhileTheDestinationIsStillFinishing(): void
+    {
+        $dir = $this->createTemporaryDirectory();
+        Config::set('migration_dir', $dir);
+        define('WP_CONTENT_DIR', rtrim($dir, '/'));
+        $lock = new MigrationLock();
+        $this->assertTrue($lock->acquire('mig_1'));
+        $service = $this->createMock(MigrationService::class);
+        $service->method('finalizeMigration')->willReturn(['success' => true, 'finalized' => false, 'phase' => 'finalizing']);
+
+        $response = $this->controller($service)->finalize(new \WP_REST_Request(['migration_id' => 'mig_1']));
+
+        $data = $response->get_data();
+        $this->assertTrue($data['success']);
+        $this->assertFalse($data['finalized']);
+        $this->assertSame('finalizing', $data['response']['phase']);
         $this->assertTrue($lock->isLocked());
     }
 
@@ -535,7 +603,8 @@ final class MigrationControllerTest extends TestCase
             $htaccess ?? $this->createMock(HtaccessService::class),
             null,
             null,
-            new DestinationGuard(static fn (string $host): array => ['8.8.8.8'])
+            new DestinationGuard(static fn (string $host): array => ['8.8.8.8']),
+            $this->handshake
         );
     }
 }

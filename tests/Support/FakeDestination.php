@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests\Support;
+namespace PanelAlpha\Migrator\Tests\Support;
 
 use RuntimeException;
 
@@ -22,7 +22,7 @@ final class FakeDestination
 
     private function __construct()
     {
-        $this->directory = sys_get_temp_dir() . '/wp-migrator-fake-destination-' . bin2hex(random_bytes(6));
+        $this->directory = sys_get_temp_dir() . '/panelalpha-migrator-fake-destination-' . bin2hex(random_bytes(6));
         mkdir($this->directory, 0755, true);
         $this->port = self::findFreePort();
 
@@ -70,12 +70,17 @@ final class FakeDestination
     }
 
     /**
-     * Answers requests whose URI contains $match with the given status and body.
+     * Answers requests whose URI contains $match with the given status and body,
+     * for the next $times requests only when given.
      */
-    public function respondWith(string $match, int $status, string $body = '{}'): void
+    public function respondWith(string $match, int $status, string $body = '{}', ?int $times = null): void
     {
         $rules = $this->rules();
-        $rules[] = ['match' => $match, 'status' => $status, 'body' => $body];
+        $rule = ['match' => $match, 'status' => $status, 'body' => $body];
+        if ($times !== null) {
+            $rule['times'] = $times;
+        }
+        $rules[] = $rule;
         file_put_contents($this->directory . '/rules.json', json_encode($rules));
     }
 

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Services\Backup\ProgressCalculator;
+use PanelAlpha\Migrator\Services\Backup\ProgressCalculator;
 
 final class ProgressCalculatorTest extends TestCase
 {

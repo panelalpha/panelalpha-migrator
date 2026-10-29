@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\ExclusionParser;
+use PanelAlpha\Migrator\Helpers\ExclusionParser;
 
 final class ExclusionParserTest extends TestCase
 {
@@ -37,7 +37,7 @@ final class ExclusionParserTest extends TestCase
     public function testDotFoldersAreLeftOutOfTheScan(): void
     {
         $result = ExclusionParser::parse(".ddev\n.git\n/node_modules");
-        $exclusion = new \WordpressMigrator\Services\Scanner\FileExclusionService($result['directories'], $result['extensions'], $result['files']);
+        $exclusion = new \PanelAlpha\Migrator\Services\Scanner\FileExclusionService($result['directories'], $result['extensions'], $result['files']);
 
         $this->assertTrue($exclusion->isExcluded('/site/.ddev/config.yaml', '/site'));
         $this->assertTrue($exclusion->isExcluded('/site/wp-content/themes/x/.git/HEAD', '/site'));

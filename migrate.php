@@ -2,36 +2,37 @@
 /**
  * WordPress Migration Script
  *
- * Usage: php migrate.php <destination_url_with_token> [source_url] [batch_size]
+ * Usage: php migrate.php <destination_url_with_token> <source_token> [source_url] [batch_size]
  *
  * Example:
- * php migrate.php "http://dest.com?token=abc123...def" "http://localhost" 50
+ * php migrate.php "http://dest.com?token=abc123...def" "<source_token>" "http://localhost" 50
  */
+
+if (PHP_SAPI !== 'cli') {
+    exit;
+}
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-if ($argc < 2) {
-    echo "Usage: php migrate.php <destination_url_with_token> [source_url] [batch_size]\n";
+if ($argc < 3) {
+    echo "Usage: php migrate.php <destination_url_with_token> <source_token> [source_url] [batch_size]\n";
     echo "\nExample:\n";
-    echo "  php migrate.php \"http://dest.com?token=abc123...\" \"http://localhost\" 50\n";
+    echo "  php migrate.php \"http://dest.com?token=abc123...\" \"<source_token>\" \"http://localhost\" 50\n";
     exit(1);
 }
 
 $destinationUrl = $argv[1];
-$sourceUrl = $argv[2] ?? 'http://localhost';
-$batchSize = (int)($argv[3] ?? 50);
-
-$configPath = __DIR__ . '/config.php';
-$config = is_file($configPath) ? include $configPath : [];
-$sourceToken = is_array($config) ? (string) ($config['token'] ?? '') : '';
+$sourceToken = (string) $argv[2];
+$sourceUrl = $argv[3] ?? 'http://localhost';
+$batchSize = (int)($argv[4] ?? 50);
 
 if ($sourceToken === '') {
-    echo "✗ Error: No token configured in config.php\n";
+    echo "✗ Error: The source token is empty\n";
     exit(1);
 }
 
-$apiBase = rtrim($sourceUrl, '/') . '/wp-json/wp-migrator/v1';
+$apiBase = rtrim($sourceUrl, '/') . '/wp-json/panelalpha-migrator/v1';
 
 echo str_repeat("=", 70) . "\n";
 echo "WordPress Migration - Batch Processing\n";

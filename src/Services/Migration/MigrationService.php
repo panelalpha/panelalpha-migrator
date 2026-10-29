@@ -1,23 +1,24 @@
 <?php
 
-namespace WordpressMigrator\Services\Migration;
+namespace PanelAlpha\Migrator\Services\Migration;
 
 use Exception;
-use WordpressMigrator\Api\RouteProvider;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\ExclusionParser;
-use WordpressMigrator\Helpers\MigrationLock;
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Services\Scanner\FileScanner;
-use WordpressMigrator\Services\Migration\MigrationInfoGenerator;
-use WordpressMigrator\Services\Migration\MigrationFinalizer;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
-use WordpressMigrator\Services\Scanner\FileScannerConfig;
+use PanelAlpha\Migrator\Api\RouteProvider;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\ExclusionParser;
+use PanelAlpha\Migrator\Helpers\MigrationLock;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Services\Scanner\FileScanner;
+use PanelAlpha\Migrator\Services\Migration\MigrationInfoGenerator;
+use PanelAlpha\Migrator\Services\Migration\MigrationFinalizer;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Services\Scanner\FileScannerConfig;
 
 /**
  * Class MigrationService
  *
- * @package WordpressMigrator\Services\Migration
+ * @package PanelAlpha\Migrator\Services\Migration
  *
  * Service for handling migration operations.
  */
@@ -59,9 +60,10 @@ class MigrationService
      * @param bool        $backupFiles
      * @param string|null $pinnedIp
      * @param bool        $insecureTls Skip the HTTPS certificate check; only used with a manual IP
+     * @param string|null $restMode    REST URL form found when the destination was checked, see DestinationEndpoint
      * @return array
      */
-    public function scanAndPrepareMigration(string $destinationUrl, ?string $exclusionsInput = null, ?string $token = null, ?string $ip = null, bool $base64 = false, bool $backupDatabase = true, bool $backupFiles = true, ?string $pinnedIp = null, bool $insecureTls = false): array
+    public function scanAndPrepareMigration(string $destinationUrl, ?string $exclusionsInput = null, ?string $token = null, ?string $ip = null, bool $base64 = false, bool $backupDatabase = true, bool $backupFiles = true, ?string $pinnedIp = null, bool $insecureTls = false, ?string $restMode = null): array
     {
         if ($this->lock->isLocked()) {
             throw new Exception('Another migration is in progress. Wait for it to finish before scanning.');
@@ -106,6 +108,10 @@ class MigrationService
 
         if (!empty($pinnedIp)) {
             $migrationDataArray['pinned_ip'] = $pinnedIp;
+        }
+
+        if ($restMode !== null) {
+            $migrationDataArray[DestinationEndpoint::MODE_KEY] = $restMode;
         }
 
         if ($base64) {

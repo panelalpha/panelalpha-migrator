@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Services\Scanner\FileExclusionService;
+use PanelAlpha\Migrator\Services\Scanner\FileExclusionService;
 
 final class FileExclusionServiceTest extends TestCase
 {
@@ -16,7 +16,7 @@ final class FileExclusionServiceTest extends TestCase
     protected function setUp(): void
     {
         $this->exclusion = new FileExclusionService(
-            ['cache', 'wp-content/uploads/wp-migrator'],
+            ['cache', 'wp-content/uploads/panelalpha-migrator'],
             ['log', 'tmp'],
             ['error_log', 'wp-config.php']
         );

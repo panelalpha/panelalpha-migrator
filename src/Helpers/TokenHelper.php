@@ -1,56 +1,53 @@
 <?php
 
-namespace WordpressMigrator\Helpers;
+namespace PanelAlpha\Migrator\Helpers;
 
 /**
  * Class TokenHelper
  *
- * @package WordpressMigrator\Helpers
+ * @package PanelAlpha\Migrator\Helpers
  *
- * Helper for reading authentication token and configuration from config.php file.
+ * Helper for reading and saving the site token and the plugin settings.
+ * Both live in WordPress options, so a plugin update does not remove them.
  */
 class TokenHelper
 {
+    public const TOKEN_OPTION = 'panelalpha_migrator_token';
+
+    public const SETTINGS_OPTION = 'panelalpha_migrator_settings';
+
     /**
-     * Gets the authentication token from config.php file.
+     * Gets the authentication token of this site.
      *
-     * @return string|null
+     * @return string|null Null when no token is saved
      */
     public static function getToken(): ?string
     {
-        $pluginDir = defined('WP_MIGRATOR_PLUGIN_DIR')
-            ? WP_MIGRATOR_PLUGIN_DIR
-            : dirname(__DIR__, 2) . '/';
+        if (!function_exists('get_option')) {
+            return null;
+        }
 
-        $token = self::readToken($pluginDir . 'config.php');
+        $token = get_option(self::TOKEN_OPTION, '');
 
-        return $token === '' ? null : $token;
+        return is_string($token) && $token !== '' ? $token : null;
     }
 
     /**
-     * Reads the token from config.php.
+     * Saves the authentication token and checks that it can be read back.
+     * The option is not autoloaded, so it is not loaded on every page.
      *
-     * The file text is read first, because right after a token change the
-     * opcode cache can still answer an include with the previous config.php.
-     *
-     * @param string $configFilePath
-     * @return string Empty when no token is configured
+     * @param string $token
+     * @return bool
      */
-    public static function readToken(string $configFilePath): string
+    public static function saveToken(string $token): bool
     {
-        if (!file_exists($configFilePath)) {
-            return '';
+        if (!function_exists('update_option') || !function_exists('get_option')) {
+            return false;
         }
 
-        $content = @file_get_contents($configFilePath);
-        if (is_string($content) && preg_match("/'token'\s*=>\s*'([^']*)'/", $content, $matches)) {
-            return $matches[1];
-        }
+        update_option(self::TOKEN_OPTION, $token, false);
 
-        $configData = include $configFilePath;
-        $token = is_array($configData) ? ($configData['token'] ?? '') : '';
-
-        return is_string($token) ? $token : '';
+        return get_option(self::TOKEN_OPTION, '') === $token;
     }
 
     /**
@@ -73,50 +70,93 @@ class TokenHelper
     }
 
     /**
-     * Gets the configuration from config.php file.
+     * Gets the plugin settings: the defaults with the saved values on top.
+     * A saved value of the wrong type is ignored and unknown keys are dropped.
      *
-     * @return array
+     * @return array{mode: string, show_buttons: bool, allowed_destinations: list<string>}
      */
-    public static function getConfig(): array
+    public static function getSettings(): array
     {
-        $pluginDir = defined('WP_MIGRATOR_PLUGIN_DIR')
-            ? WP_MIGRATOR_PLUGIN_DIR
-            : dirname(__DIR__, 2) . '/';
+        $stored = function_exists('get_option') ? get_option(self::SETTINGS_OPTION, []) : [];
 
-        $configFilePath = $pluginDir . 'config.php';
-
-        if (!file_exists($configFilePath)) {
-            return [];
-        }
-
-        $configData = include $configFilePath;
-
-        if (!is_array($configData)) {
-            return [];
-        }
-
-        return $configData;
+        return self::normalizeSettings(is_array($stored) ? $stored : []);
     }
 
     /**
-     * Gets the migration mode from config.php file.
+     * Saves the plugin settings. Values of the wrong type are dropped.
+     *
+     * @param array $settings Keys: mode, show_buttons, allowed_destinations
+     * @return bool
+     */
+    public static function saveSettings(array $settings): bool
+    {
+        if (!function_exists('update_option') || !function_exists('get_option')) {
+            return false;
+        }
+
+        $clean = self::normalizeSettings($settings);
+
+        update_option(self::SETTINGS_OPTION, $clean);
+
+        return get_option(self::SETTINGS_OPTION, null) === $clean;
+    }
+
+    /**
+     * Gets the migration mode.
      *
      * @return string 'source' or 'destination'
      */
     public static function getMode(): string
     {
-        $config = self::getConfig();
-        return $config['mode'] ?? 'source';
+        return self::getSettings()['mode'];
     }
 
     /**
-     * Gets the showButtons setting from config.php file.
+     * Gets the show_buttons setting.
      *
      * @return bool
      */
     public static function getShowButtons(): bool
     {
-        $config = self::getConfig();
-        return $config['showButtons'] ?? true;
+        return self::getSettings()['show_buttons'];
+    }
+
+    /**
+     * Gets the destinations that may be migrated to even when they look private.
+     *
+     * @return list<string>
+     */
+    public static function getAllowedDestinations(): array
+    {
+        return self::getSettings()['allowed_destinations'];
+    }
+
+    /**
+     * Keeps the known settings with the right type, filled up with the defaults.
+     *
+     * @param array $settings
+     * @return array{mode: string, show_buttons: bool, allowed_destinations: list<string>}
+     */
+    private static function normalizeSettings(array $settings): array
+    {
+        $clean = [
+            'mode' => 'source',
+            'show_buttons' => true,
+            'allowed_destinations' => [],
+        ];
+
+        if (isset($settings['mode']) && in_array($settings['mode'], ['source', 'destination'], true)) {
+            $clean['mode'] = $settings['mode'];
+        }
+
+        if (isset($settings['show_buttons']) && is_bool($settings['show_buttons'])) {
+            $clean['show_buttons'] = $settings['show_buttons'];
+        }
+
+        if (isset($settings['allowed_destinations']) && is_array($settings['allowed_destinations'])) {
+            $clean['allowed_destinations'] = array_values(array_filter($settings['allowed_destinations'], 'is_string'));
+        }
+
+        return $clean;
     }
 }

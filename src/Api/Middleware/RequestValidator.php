@@ -1,13 +1,13 @@
 <?php
 
-namespace WordpressMigrator\Api\Middleware;
+namespace PanelAlpha\Migrator\Api\Middleware;
 
-use WordpressMigrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
 
 /**
  * Class RequestValidator
  *
- * @package WordpressMigrator\Api\Middleware
+ * @package PanelAlpha\Migrator\Api\Middleware
  *
  * Validates incoming API requests.
  */
@@ -94,6 +94,41 @@ class RequestValidator
     }
 
     /**
+     * Gets the chunk sent by the source from the request body.
+     * The body is JSON, or base64 of JSON when the source says so (X-Migrator-Encoding: base64)
+     * or when it does not start like JSON. A compressed chunk is expanded.
+     *
+     * @param mixed $request
+     * @return array
+     * @throws InvalidRequestException
+     */
+    public static function getChunkBody($request): array
+    {
+        $input = (string) $request->get_body();
+        $isBase64 = $request->get_header('x_migrator_encoding') === 'base64';
+
+        if (!$isBase64 && $input !== '') {
+            $trimmed = ltrim($input);
+            $isBase64 = $trimmed !== '' && $trimmed[0] !== '{' && $trimmed[0] !== '[';
+        }
+
+        if ($isBase64) {
+            $decoded = base64_decode($input, true);
+            if ($decoded !== false) {
+                $input = $decoded;
+            }
+        }
+
+        $data = json_decode($input, true);
+
+        if (!is_array($data)) {
+            self::throwError('invalid_json', 'Invalid JSON input');
+        }
+
+        return JsonCompressor::isCompressed($data) ? JsonCompressor::decompress($data) : $data;
+    }
+
+    /**
      * Throws an error response.
      *
      * @param string $code
@@ -104,7 +139,7 @@ class RequestValidator
     private static function throwError(string $code, string $message): void
     {
         if (function_exists('rest_ensure_response')) {
-            throw new InvalidRequestException($code, $message);
+            throw new InvalidRequestException(esc_html($code), esc_html($message));
         }
 
         http_response_code(400);

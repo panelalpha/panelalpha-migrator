@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Api\Middleware;
+namespace PanelAlpha\Migrator\Api\Middleware;
 
 use InvalidArgumentException;
 

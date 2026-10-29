@@ -1,6 +1,6 @@
-# WordPress Migrator
+# PanelAlpha Migrator
 
-WordPress Migrator copies a WordPress site, its files and its database, from one server to another WordPress installation. You run it from the WordPress dashboard on both sites, or PanelAlpha runs it for you over the plugin's API. This guide covers plugin version 1.2.0.
+PanelAlpha Migrator copies a WordPress site, its files and its database, from one server to another WordPress installation. You run it from the WordPress dashboard on both sites, or PanelAlpha runs it for you over the plugin's API. This guide covers plugin version 1.2.0.
 
 Two words are used on every page. The **source** is the site you are moving. The **destination** is the WordPress installation it moves to, usually a new site on a PanelAlpha server.
 

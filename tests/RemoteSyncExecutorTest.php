@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Services\Backup\BackupService;
-use WordpressMigrator\Services\RemoteSync\RemoteSyncExecutor;
+use PanelAlpha\Migrator\Services\Backup\BackupService;
+use PanelAlpha\Migrator\Services\RemoteSync\RemoteSyncExecutor;
 
 final class RemoteSyncExecutorTest extends TestCase
 {

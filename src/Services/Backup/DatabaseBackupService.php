@@ -2,21 +2,22 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Services\Backup;
+namespace PanelAlpha\Migrator\Services\Backup;
 
-use WordpressMigrator\Services\Scanner\DatabaseScanner;
-use WordpressMigrator\Services\Migration\MigrationStorageService;
-use WordpressMigrator\Helpers\BinarySafeEncoder;
-use WordpressMigrator\Helpers\DateTime;
-use WordpressMigrator\Helpers\DestinationGuard;
-use WordpressMigrator\Helpers\Http;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Services\Scanner\DatabaseScanner;
+use PanelAlpha\Migrator\Services\Migration\MigrationStorageService;
+use PanelAlpha\Migrator\Helpers\BinarySafeEncoder;
+use PanelAlpha\Migrator\Helpers\DateTime;
+use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
+use PanelAlpha\Migrator\Helpers\DestinationGuard;
+use PanelAlpha\Migrator\Helpers\Http;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
 
 /**
  * Class DatabaseBackupService
  *
- * @package WordpressMigrator\Services\Backup
+ * @package PanelAlpha\Migrator\Services\Backup
  *
  * Service for handling database backup operations.
  */
@@ -79,7 +80,7 @@ class DatabaseBackupService
         $ip = $this->migrationData['pinned_ip'] ?? null;
         $base64 = $this->migrationData['base64'] ?? false;
 
-        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData));
+        $this->httpSender = new ChunkHttpSender($destinationUrl, $authToken, $ip, $base64, Http::tlsArgs($this->migrationData), DestinationEndpoint::modeFrom($this->migrationData));
         $this->domainReplacer = new ChunkDomainReplacer($sourceUrl, $destinationUrl);
     }
 
@@ -128,7 +129,7 @@ class DatabaseBackupService
      * Fetches the structure of a table.
      *
      * @param string $tableName Table name
-     * @return \WordpressMigrator\Dto\TableStructure Table structure object
+     * @return \PanelAlpha\Migrator\Dto\TableStructure Table structure object
      * @throws \Exception If structure cannot be fetched
      */
     private function fetchTableStructure(string $tableName)
@@ -136,7 +137,7 @@ class DatabaseBackupService
         $structure = $this->dbScanner->getTableStructure($tableName);
 
         if (!$structure) {
-            throw new \Exception('Cannot get table structure for ' . $tableName);
+            throw new \Exception(esc_html('Cannot get table structure for ' . $tableName));
         }
 
         return $structure;
@@ -220,7 +221,7 @@ class DatabaseBackupService
      * @param string $tableName Table name
      * @param int    $offset Row offset
      * @param int    $limit Row limit
-     * @return \WordpressMigrator\Dto\TableChunk Table chunk object
+     * @return \PanelAlpha\Migrator\Dto\TableChunk Table chunk object
      * @throws \Exception If chunk cannot be fetched
      */
     private function fetchTableChunk(string $tableName, int $offset, int $limit)
@@ -228,7 +229,7 @@ class DatabaseBackupService
         $tableChunk = $this->dbScanner->getTableChunk($tableName, $offset, $limit);
 
         if (!$tableChunk) {
-            throw new \Exception('Cannot get table data for ' . $tableName);
+            throw new \Exception(esc_html('Cannot get table data for ' . $tableName));
         }
 
         return $tableChunk;
@@ -452,7 +453,6 @@ class DatabaseBackupService
             ?? null;
 
         if (empty($destinationUrl)) {
-            error_log("ERROR: Destination URL not found in migration data. Keys: " . json_encode(array_keys($this->migrationData)));
             throw new \Exception('Destination URL not found in migration data');
         }
 

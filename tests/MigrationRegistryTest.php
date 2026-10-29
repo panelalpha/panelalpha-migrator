@@ -2,17 +2,16 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
-use WordpressMigrator\Tests\Support\FakeDatabase;
-use WordpressMigrator\Tests\Support\ResetsGlobalState;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Tests\Support\ResetsGlobalState;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 final class MigrationRegistryTest extends TestCase
 {
@@ -27,7 +26,6 @@ final class MigrationRegistryTest extends TestCase
     {
         $this->migrationDir = $this->createTemporaryDirectory();
         Config::set('migration_dir', $this->migrationDir);
-        FakeDatabase::install();
         $this->registry = new MigrationRegistry('mig_1');
     }
 
@@ -40,6 +38,15 @@ final class MigrationRegistryTest extends TestCase
         $this->assertFalse($this->registry->markChunkRestored('file_chunk', $this->fileChunk('a.txt')));
         $this->assertFalse($this->registry->updateStatus('restoring'));
         $this->assertFalse($this->registry->addError('x'));
+    }
+
+    public function testOnlySkippedPathsFromTheManifestAreKept(): void
+    {
+        $status = ['files' => ['a.txt' => [], 'b.log' => []]];
+
+        $this->assertSame(['b.log'], $this->registry->knownSkippedFiles($status, ['b.log', 'b.log', 'nope.txt', '../etc/passwd']));
+        $this->assertSame([], $this->registry->knownSkippedFiles($status, 'b.log'));
+        $this->assertSame([], $this->registry->knownSkippedFiles($status, ['a' => ['b.log'], 123, null]));
     }
 
     public function testRegisterCreatesCollectingStatusForEveryFileAndTable(): void
@@ -324,6 +331,47 @@ final class MigrationRegistryTest extends TestCase
         $this->writeMigrationInfo(['files' => [['path' => 'big.bin', 'chunks' => [['offset' => 0, 'size' => 10], ['offset' => 10, 'size' => 4]]]]]);
 
         $this->assertSame(['offset' => 10, 'size' => 4, 'chunk_number' => 2], $this->registry->expectedFileChunk('big.bin', 2));
+    }
+
+    public function testTableMapIsStoredWithTheHashAndReadBack(): void
+    {
+        $this->registerTwoFilesAndOneTable();
+        $this->assertNull($this->registry->getTableHash());
+        $this->assertSame([], $this->registry->getTableMap());
+
+        $map = ['wp_posts' => ['destination' => 'wp_posts', 'temp' => 'pmt_ab12cd_wp_posts', 'backup' => 'pmb_ab12cd_wp_posts']];
+        $this->assertTrue($this->registry->saveTableMap('ab12cd', $map));
+
+        $fresh = new MigrationRegistry('mig_1');
+        $this->assertSame('ab12cd', $fresh->getTableHash());
+        $this->assertSame($map, $fresh->getTableMap());
+        $this->assertSame(2, $fresh->getStatus()['tables']['wp_posts']['total_chunks']);
+    }
+
+    public function testRegisteringAgainKeepsTheTableHash(): void
+    {
+        $this->registerTwoFilesAndOneTable();
+        $this->registry->saveTableMap('ab12cd', []);
+
+        $this->registerTwoFilesAndOneTable();
+
+        $this->assertSame('ab12cd', $this->registry->getTableHash());
+        $this->assertSame([], $this->registry->getTableMap());
+    }
+
+    public function testTableMapIgnoresTablesThatAreNotInTheManifest(): void
+    {
+        $this->registerTwoFilesAndOneTable();
+
+        $this->registry->saveTableMap('ab12cd', ['wp_other' => ['destination' => 'wp_other', 'temp' => 'pmt_ab12cd_wp_other', 'backup' => 'pmb_ab12cd_wp_other']]);
+
+        $this->assertSame([], $this->registry->getTableMap());
+    }
+
+    public function testTableMapOfAnUnknownMigrationIsNotSaved(): void
+    {
+        $this->assertFalse($this->registry->saveTableMap('ab12cd', []));
+        $this->assertNull($this->registry->getTableHash());
     }
 
     private function registerTwoFilesAndOneTable(): bool

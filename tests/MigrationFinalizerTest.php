@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use Exception;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\JsonCompressor;
-use WordpressMigrator\Helpers\TokenHelper;
-use WordpressMigrator\Services\Migration\MigrationFinalizer;
-use WordpressMigrator\Tests\Support\CurlOptionCapture;
-use WordpressMigrator\Tests\Support\FakeDestination;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\JsonCompressor;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Services\Migration\MigrationFinalizer;
+use PanelAlpha\Migrator\Tests\Support\CurlOptionCapture;
+use PanelAlpha\Migrator\Tests\Support\FakeDestination;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * @runTestsInSeparateProcesses
@@ -33,7 +33,7 @@ final class MigrationFinalizerTest extends TestCase
     protected function setUp(): void
     {
         $this->migrationDir = $this->createTemporaryDirectory();
-        define('WP_MIGRATOR_MIGRATION_DIR', $this->migrationDir);
+        define('PANELALPHA_MIGRATOR_MIGRATION_DIR', $this->migrationDir);
         Config::set('allowed_destinations', ['127.0.0.1']);
         $this->destination = FakeDestination::get();
     }
@@ -62,12 +62,12 @@ final class MigrationFinalizerTest extends TestCase
         $finalizer = new MigrationFinalizer('mig_1');
         $this->assertTrue($finalizer->isComplete());
         CurlOptionCapture::reset();
-        $this->assertSame(['success' => true], $finalizer->sendCompletionSignal());
+        $this->assertSame(['success' => true, 'finalized' => true], $finalizer->sendCompletionSignal());
 
         $this->assertSame($before, file_get_contents($this->migrationDir . 'mig_1.json'));
         $requests = $this->destination->requests();
         $this->assertCount(1, $requests);
-        $this->assertSame('/wp-json/wp-migrator/v1/collect-chunk', $requests[0]['uri']);
+        $this->assertSame('/wp-json/panelalpha-migrator/v1/receive/finalize', $requests[0]['uri']);
         $this->assertSame('POST', $requests[0]['method']);
         $this->assertSame('application/json', $requests[0]['headers']['content-type']);
         $this->assertSame('destination-token', $requests[0]['headers']['x-migrator-token']);
@@ -113,7 +113,7 @@ final class MigrationFinalizerTest extends TestCase
         $result = (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
 
         $this->assertSame([], json_decode($this->destination->requests()[0]['body'], true)['skipped_files']);
-        $this->assertSame(['success' => true], $result);
+        $this->assertSame(['success' => true, 'finalized' => true], $result);
     }
 
     public function testCompletionSignalConnectsToTheStoredPinnedIp(): void
@@ -125,7 +125,7 @@ final class MigrationFinalizerTest extends TestCase
         $this->saveMigration($data);
         CurlOptionCapture::reset();
 
-        $this->assertSame(['success' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
+        $this->assertSame(['success' => true, 'finalized' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
 
         $this->assertSame(
             ['destination.invalid:' . $this->destination->port() . ':127.0.0.1'],
@@ -154,7 +154,7 @@ final class MigrationFinalizerTest extends TestCase
         $this->saveMigration(array_merge($this->baseData(), $tlsData));
         CurlOptionCapture::reset();
 
-        $this->assertSame(['success' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
+        $this->assertSame(['success' => true, 'finalized' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
 
         $this->assertSame($strict, CurlOptionCapture::peerVerificationEnabled());
         $this->assertSame($strict, CurlOptionCapture::hostVerificationEnabled());
@@ -200,13 +200,13 @@ final class MigrationFinalizerTest extends TestCase
     public function testServerErrorIncludesStatusAndResponseBody(): void
     {
         $this->saveMigration($this->baseData());
-        $this->destination->respondWith('/collect-chunk', 503, '{"message":"busy"}');
+        $this->destination->respondWith('/receive/finalize', 503, '{"message":"busy"}');
 
         try {
             (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
             $this->fail('Expected destination error');
         } catch (Exception $exception) {
-            $this->assertSame('Destination returned error: 503 - {"message":"busy"}', $exception->getMessage());
+            $this->assertSame('Destination returned error: 503 - {&quot;message&quot;:&quot;busy&quot;}', $exception->getMessage());
         }
 
         $this->assertCount(1, $this->destination->requests());
@@ -215,7 +215,7 @@ final class MigrationFinalizerTest extends TestCase
     public function testLongErrorBodyIsCutInTheMessage(): void
     {
         $this->saveMigration($this->baseData());
-        $this->destination->respondWith('/collect-chunk', 503, str_repeat('z', 1000));
+        $this->destination->respondWith('/receive/finalize', 503, str_repeat('z', 1000));
 
         try {
             (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
@@ -232,80 +232,111 @@ final class MigrationFinalizerTest extends TestCase
         try {
             (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
             $this->fail('Expected the destination to be refused');
-        } catch (\WordpressMigrator\Helpers\DestinationNotAllowedException $exception) {
+        } catch (\PanelAlpha\Migrator\Helpers\DestinationNotAllowedException $exception) {
             $this->assertSame([], $this->destination->requests());
         }
     }
 
-    public function testNonJsonAnswerOnThePrettyRouteFallsBackToTheRestRouteQuery(): void
+    public function testPlainRestModeFromTheMigrationDataPostsToTheRestRouteQuery(): void
     {
-        $this->saveMigration($this->baseData());
-        $this->destination->respondWith('/wp-json/', 200, '<html>home page</html>');
+        $this->saveMigration($this->baseData() + ['drm' => 'plain']);
 
-        $this->assertSame(['success' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
+        $this->assertSame(['success' => true, 'finalized' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
 
         $requests = $this->destination->requests();
-        $this->assertCount(2, $requests);
-        $this->assertSame('/wp-json/wp-migrator/v1/collect-chunk', $requests[0]['uri']);
-        $this->assertSame('/?rest_route=/wp-migrator/v1/collect-chunk', $requests[1]['uri']);
-        $this->assertSame($requests[0]['body'], $requests[1]['body']);
-        $this->assertSame('destination-token', $requests[1]['headers']['x-migrator-token']);
+        $this->assertCount(1, $requests);
+        $this->assertSame('/?rest_route=/panelalpha-migrator/v1/receive/finalize', $requests[0]['uri']);
+        $this->assertSame('destination-token', $requests[0]['headers']['x-migrator-token']);
     }
 
-    public function test404OnThePrettyRouteFallsBackToTheRestRouteQuery(): void
+    public function test404IsReportedWithoutARetry(): void
     {
         $this->saveMigration($this->baseData());
-        $this->destination->respondWith('/wp-json/', 404, '{"code":"rest_no_route"}');
+        $this->destination->respondWith('/receive/finalize', 404, '{"code":"rest_no_route"}');
 
-        $this->assertSame(['success' => true], (new MigrationFinalizer('mig_1'))->sendCompletionSignal());
+        try {
+            (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
+            $this->fail('Expected destination error');
+        } catch (Exception $exception) {
+            $this->assertStringStartsWith('Destination returned error: 404 - ', $exception->getMessage());
+        }
 
-        $this->assertCount(2, $this->destination->requests());
-    }
-
-    public function testHtmlAnswerOnBothRoutesIsNotAConfirmation(): void
-    {
-        $this->saveMigration($this->baseData());
-        $this->destination->respondWith('collect-chunk', 200, '<html>home page</html>');
-
-        $this->assertNull((new MigrationFinalizer('mig_1'))->sendCompletionSignal());
-
-        $this->assertCount(2, $this->destination->requests());
-    }
-
-    public function testAcknowledgementFromADestinationBefore120CountsAsConfirmation(): void
-    {
-        $this->saveMigration($this->baseData());
-        $legacy = [
-            'type' => 'acknowledgment',
-            'migration_id' => 'mig_1',
-            'chunk_id' => null,
-            'status' => 'received',
-            'processed' => true,
-            'error' => null,
-            'processing_result' => ['action' => 'migration_completed'],
-        ];
-        $this->destination->respondWith('collect-chunk', 200, json_encode($legacy));
-
-        $result = (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
-
-        $this->assertTrue($result['success']);
-        $this->assertSame('migration_completed', $result['processing_result']['action']);
         $this->assertCount(1, $this->destination->requests());
     }
 
-    public function testAcknowledgementForAnotherMigrationIsNotAConfirmation(): void
+    public function testHtmlAnswerIsNotAConfirmation(): void
     {
         $this->saveMigration($this->baseData());
-        $this->destination->respondWith('collect-chunk', 200, json_encode([
-            'type' => 'acknowledgment',
-            'migration_id' => 'other',
-            'status' => 'received',
-            'processed' => true,
-        ]));
+        $this->destination->respondWith('receive/finalize', 200, '<html>home page</html>');
+
+        $this->assertNull((new MigrationFinalizer('mig_1'))->sendCompletionSignal());
+
+        $this->assertCount(1, $this->destination->requests());
+    }
+
+    public function testAnswerWithoutSuccessIsReturnedAsIs(): void
+    {
+        $this->saveMigration($this->baseData());
+        $this->destination->respondWith('receive/finalize', 200, '{"success":false,"message":"nope"}');
 
         $result = (new MigrationFinalizer('mig_1'))->sendCompletionSignal();
 
-        $this->assertArrayNotHasKey('success', $result);
+        $this->assertFalse($result['success']);
+    }
+
+    public function testFinalizeIsAskedAgainWhileTheDestinationIsStillFinishing(): void
+    {
+        $this->saveMigration($this->baseData());
+        $this->destination->respondWith('receive/finalize', 202, '{"success":true,"finalized":false,"phase":"finalizing"}', 2);
+
+        $result = (new MigrationFinalizer('mig_1', 5, 0))->sendCompletionSignal();
+
+        $this->assertSame(['success' => true, 'finalized' => true], $result);
+        $requests = $this->destination->requests();
+        $this->assertCount(3, $requests);
+        $this->assertSame($requests[0]['body'], $requests[2]['body']);
+    }
+
+    public function testStillFinishingAfterTheLastAttemptIsReturnedWithoutTheSkippedFilesWarning(): void
+    {
+        $data = $this->baseData();
+        $data['files'] = [
+            ['path' => 'cache/x.log', 'status' => 'skipped', 'size' => 30, 'chunks' => [['status' => 'skipped']]],
+        ];
+        $this->saveMigration($data);
+        $this->destination->respondWith('receive/finalize', 202, '{"success":true,"finalized":false,"phase":"finalizing"}');
+
+        $result = (new MigrationFinalizer('mig_1', 3, 0))->sendCompletionSignal();
+
+        $this->assertSame(['success' => true, 'finalized' => false, 'phase' => 'finalizing'], $result);
+        $this->assertCount(3, $this->destination->requests());
+    }
+
+    public function testStatus202WithoutAFinalizedFieldCountsAsStillFinishing(): void
+    {
+        $this->saveMigration($this->baseData());
+        $this->destination->respondWith('receive/finalize', 202, '{"success":true}');
+
+        $result = (new MigrationFinalizer('mig_1', 2, 0))->sendCompletionSignal();
+
+        $this->assertFalse($result['finalized']);
+        $this->assertCount(2, $this->destination->requests());
+    }
+
+    public function testAnErrorWhileFinalizingStopsTheLoop(): void
+    {
+        $this->saveMigration($this->baseData());
+        $this->destination->respondWith('receive/finalize', 202, '{"success":true,"finalized":false}', 1);
+        $this->destination->respondWith('receive/finalize', 500, '{"code":"finalize_failed"}');
+
+        try {
+            (new MigrationFinalizer('mig_1', 5, 0))->sendCompletionSignal();
+            $this->fail('Expected destination error');
+        } catch (Exception $exception) {
+            $this->assertStringStartsWith('Destination returned error: 500 - ', $exception->getMessage());
+        }
+
+        $this->assertCount(2, $this->destination->requests());
     }
 
     public function testConnectionFailureIsReported(): void
@@ -329,9 +360,8 @@ final class MigrationFinalizerTest extends TestCase
 
     public function testCompletionNeverSendsTheSiteTokenToTheDestination(): void
     {
-        $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php\nreturn ['token' => 'config-token'];\n");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        require __DIR__ . '/Support/OptionStubs.php';
+        update_option(TokenHelper::TOKEN_OPTION, 'site-token', false);
         $data = $this->baseData();
         unset($data['token']);
         $this->saveMigration($data);

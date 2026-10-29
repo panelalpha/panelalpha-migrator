@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   package:
-    name: Attach wordpress-migrator.zip
+    name: Attach panelalpha-migrator.zip
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,9 +18,9 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="$(sed -n 's/^ \* Version: *//p' wordpress-migrator.php | head -n1 | tr -d '[:space:]')"
+          version="$(sed -n 's/^ \* Version: *//p' panelalpha-migrator.php | head -n1 | tr -d '[:space:]')"
           if [ "${TAG#v}" != "$version" ]; then
-            echo "::error::Release tag '$TAG' does not match Version: $version in wordpress-migrator.php"
+            echo "::error::Release tag '$TAG' does not match Version: $version in panelalpha-migrator.php"
             exit 1
           fi
 
@@ -35,14 +35,14 @@ jobs:
       - name: Build the plugin zip
         run: |
           mkdir -p build
-          zip -r -q build/wordpress-migrator.zip \
-            wordpress-migrator.php config.php migrate.php restore.php composer.json composer.lock \
+          zip -r -q build/panelalpha-migrator.zip \
+            panelalpha-migrator.php uninstall.php readme.txt composer.json composer.lock \
             assets src templates vendor \
             -x '*.DS_Store'
-          unzip -l build/wordpress-migrator.zip | tail -n 1
+          unzip -l build/panelalpha-migrator.zip | tail -n 1
 
       - name: Replace the zip on the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" build/wordpress-migrator.zip --clobber
+        run: gh release upload "$TAG" build/panelalpha-migrator.zip --clobber

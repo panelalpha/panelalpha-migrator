@@ -2,7 +2,7 @@
 
 Every endpoint the plugin adds, with who may call it. To run a migration you need only the four on the source described in [Migrate over the API](migrate-over-the-api.md). The rest are used by the **Migrator** page in the dashboard and by the two sites talking to each other.
 
-All REST endpoints live under `/wp-json/wp-migrator/v1/`. On a site without pretty permalinks, the same endpoint is at `/?rest_route=/wp-migrator/v1/<endpoint>`.
+All REST endpoints live under `/wp-json/panelalpha-migrator/v1/`. On a site without pretty permalinks, the same endpoint is at `/?rest_route=/panelalpha-migrator/v1/<endpoint>`.
 
 ## Who may call
 
@@ -12,7 +12,7 @@ All REST endpoints live under `/wp-json/wp-migrator/v1/`. On a site without pret
 | Admin or token | An administrator, or a request that carries the site's token as `?token=<token>` or in the `X-Migrator-Token` header. |
 | Open | No check. Anyone who can reach the site can call it while the plugin is active. |
 
-A request to an Admin or token endpoint with neither answers `401`. This includes `remote-sync`, `remote-sync/process-batch`, `remote-sync/status`, `transfer-htaccess`, `collect-chunk` and `migration-complete`. A site whose `config.php` has no token yet accepts only administrators, so open **Destination** on the page once to create it.
+A request to an Admin or token endpoint with neither answers `401`. This includes `remote-sync`, `remote-sync/process-batch`, `remote-sync/status`, `transfer-htaccess` and `migration-complete`. A site that has no token yet accepts only administrators, so open **Destination** on the page once to create it.
 
 ## Run a migration (call on the source)
 
@@ -41,19 +41,19 @@ A request to an Admin or token endpoint with neither answers `401`. This include
 | GET | `info` | Admin or token | The saved list of files and tables for a migration, with its summary. |
 | GET | `list-migrations` | Admin or token | Migrations saved on this site. |
 | GET | `token/current` | Admin | This site's token. |
-| POST | `token/generate-and-save` | Admin | Creates a new token and saves it in `config.php`. |
+| POST | `token/generate-and-save` | Admin | Creates a new token and saves it in the WordPress database. |
 
 ## Received on the destination
 
+The first four are called by the source. They accept only the destination token in the `X-Migrator-Token` header. A token in the address is refused, so it does not end up in server logs. A wrong or missing token answers `401`.
+
 | Method | Endpoint | Access | What it does |
 |---|---|---|---|
-| POST | `/wp-content/plugins/wordpress-migrator/restore.php?action=collect-and-restore` | Token | Receives one piece and writes it into the database or the files at once. |
-| GET | `/wp-content/plugins/wordpress-migrator/restore.php?action=status&migration_id=<id>` | Token | What the destination has received and restored. |
-| GET | `/wp-content/plugins/wordpress-migrator/restore.php?action=health` | Open | Answers `{"status":"ok","service":"restore-worker"}` when the file runs and can find the database login. |
-| POST | `collect-chunk` | Admin or token | Receives the completion message at the end of a migration. |
+| GET | `receive/check` | Token header | Tells the source that this destination can receive a migration. Returns the plugin and WordPress versions and the free disk space. |
+| POST | `receive` | Token header | Receives one piece. Database pieces go into temporary tables, file pieces into a work folder. The live site is not changed yet. |
+| POST | `receive/finalize` | Token header | Moves the files into place and swaps the new tables in. Answers `202` with `finalized: false` while another call is still finishing. |
+| GET | `receive/status` | Token header | What the destination has received for a migration. Query: `migration_id`. |
 | POST | `migration-complete` | Admin or token | Marks a received migration as collected. |
 | POST | `receive-htaccess` | Admin or token | Writes the `.htaccess` sent by `transfer-htaccess`. |
-| POST | `restore/database/next-chunk`, `restore/files/next-chunk` | Admin or token | Restores a stored piece. |
-| GET | `restore/progress` | Admin or token | Restore progress. |
 
-`restore.php` is opened directly, not through the WordPress REST API, so the destination must allow PHP files in `wp-content/plugins/wordpress-migrator/` to be opened directly. It finds the database login in `wp-config.php`, and uses the `database` setting in the plugin's `config.php` when that fails: [Settings in config.php](../01-getting-started/install.md#settings-in-configphp).
+The destination is called through the WordPress REST API only, so a security plugin or firewall that blocks `/wp-json/panelalpha-migrator/v1/` on the destination stops a migration.

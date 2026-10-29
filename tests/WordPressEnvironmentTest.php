@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Helpers\BrandingHelper;
-use WordpressMigrator\Helpers\Config;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Helpers\TokenHelper;
-use WordpressMigrator\Tests\Support\TemporaryDirectory;
+use PanelAlpha\Migrator\Helpers\BrandingHelper;
+use PanelAlpha\Migrator\Helpers\Config;
+use PanelAlpha\Migrator\Helpers\PathProvider;
+use PanelAlpha\Migrator\Helpers\TokenHelper;
+use PanelAlpha\Migrator\Tests\Support\TemporaryDirectory;
 
 /**
  * Helpers that read WordPress and plugin constants. Each test runs in its own process,
@@ -25,15 +25,15 @@ final class WordPressEnvironmentTest extends TestCase
 
     public function testPluginConstantsWinOverConfig(): void
     {
-        define('WP_MIGRATOR_MIGRATION_DIR', '/wp/wp-content/migrations/');
-        define('WP_MIGRATOR_PLUGIN_DIR', '/wp/wp-content/plugins/wordpress-migrator/');
-        define('WP_MIGRATOR_PLUGIN_URL', 'https://example.com/wp-content/plugins/wordpress-migrator/');
-        define('WP_MIGRATOR_VERSION', '1.2.0');
+        define('PANELALPHA_MIGRATOR_MIGRATION_DIR', '/wp/wp-content/migrations/');
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', '/wp/wp-content/plugins/panelalpha-migrator/');
+        define('PANELALPHA_MIGRATOR_PLUGIN_URL', 'https://example.com/wp-content/plugins/panelalpha-migrator/');
+        define('PANELALPHA_MIGRATOR_VERSION', '1.2.0');
         Config::set('migration_dir', '/elsewhere/');
 
         $this->assertSame('/wp/wp-content/migrations/', PathProvider::getMigrationDir());
-        $this->assertSame('/wp/wp-content/plugins/wordpress-migrator/', PathProvider::getPluginDir());
-        $this->assertSame('https://example.com/wp-content/plugins/wordpress-migrator/', PathProvider::getPluginUrl());
+        $this->assertSame('/wp/wp-content/plugins/panelalpha-migrator/', PathProvider::getPluginDir());
+        $this->assertSame('https://example.com/wp-content/plugins/panelalpha-migrator/', PathProvider::getPluginUrl());
         $this->assertSame('1.2.0', PathProvider::getVersion());
     }
 
@@ -92,41 +92,31 @@ final class WordPressEnvironmentTest extends TestCase
         $this->assertSame($root . 'site/', PathProvider::getAbsPath());
     }
 
-    public function testTokenHelperReadsConfigFromThePluginFolder(): void
+    public function testTokenHelperReadsTheTokenAndSettingsFromOptions(): void
     {
-        $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php return ['token' => 'abc', 'mode' => 'destination', 'showButtons' => false];");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        require __DIR__ . '/Support/OptionStubs.php';
+        update_option(TokenHelper::TOKEN_OPTION, 'abc', false);
+        update_option(TokenHelper::SETTINGS_OPTION, ['mode' => 'destination', 'show_buttons' => false]);
 
         $this->assertSame('abc', TokenHelper::getToken());
         $this->assertSame('destination', TokenHelper::getMode());
         $this->assertFalse(TokenHelper::getShowButtons());
     }
 
-    public function testTokenHelperDefaultsWithoutConfigFile(): void
+    public function testTokenHelperDefaultsWithoutOptions(): void
     {
-        define('WP_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
+        require __DIR__ . '/Support/OptionStubs.php';
 
-        $this->assertSame([], TokenHelper::getConfig());
         $this->assertNull(TokenHelper::getToken());
         $this->assertSame('source', TokenHelper::getMode());
         $this->assertTrue(TokenHelper::getShowButtons());
-    }
-
-    public function testTokenHelperIgnoresConfigThatIsNotAnArray(): void
-    {
-        $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php return 'nope';");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
-
-        $this->assertSame([], TokenHelper::getConfig());
     }
 
     public function testBrandingComesFromBrandingFile(): void
     {
         $pluginDir = $this->createTemporaryDirectory();
         file_put_contents($pluginDir . 'branding.php', "<?php return ['branding' => ['name' => 'Host Co', 'url' => 'https://host.example']];");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $pluginDir);
 
         $this->assertSame(['name' => 'Host Co', 'url' => 'https://host.example'], BrandingHelper::getBranding());
     }
@@ -135,7 +125,7 @@ final class WordPressEnvironmentTest extends TestCase
     {
         $pluginDir = $this->createTemporaryDirectory();
         file_put_contents($pluginDir . 'branding.php', "<?php return 'nope';");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $pluginDir);
 
         $this->assertSame([], BrandingHelper::getConfig());
         $this->assertSame(['name' => 'PanelAlpha', 'url' => 'https://panelalpha.com'], BrandingHelper::getBranding());
@@ -145,7 +135,7 @@ final class WordPressEnvironmentTest extends TestCase
     {
         $pluginDir = $this->createTemporaryDirectory();
         file_put_contents($pluginDir . 'branding.php', "<?php return ['branding' => ['name' => 'Host Co']];");
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $pluginDir);
 
         $this->assertSame(['name' => 'Host Co', 'url' => 'https://panelalpha.com'], BrandingHelper::getBranding());
     }
@@ -156,12 +146,13 @@ final class WordPressEnvironmentTest extends TestCase
         mkdir($abspath . 'wp-includes');
         file_put_contents($abspath . 'wp-includes/version.php', "<?php \$wp_version = '6.8.1';");
         $pluginDir = $this->createTemporaryDirectory();
-        file_put_contents($pluginDir . 'config.php', "<?php return ['mode' => 'destination', 'showButtons' => false];");
+        require __DIR__ . '/Support/OptionStubs.php';
+        update_option(TokenHelper::SETTINGS_OPTION, ['mode' => 'destination', 'show_buttons' => false]);
         define('ABSPATH', $abspath);
-        define('WP_MIGRATOR_PLUGIN_DIR', $pluginDir);
-        define('WP_MIGRATOR_PLUGIN_URL', 'https://old.example.com/wp-content/plugins/wordpress-migrator/');
-        define('WP_MIGRATOR_MIGRATION_DIR', $abspath . 'wp-content/migrations/');
-        define('WP_MIGRATOR_VERSION', '1.2.0');
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $pluginDir);
+        define('PANELALPHA_MIGRATOR_PLUGIN_URL', 'https://old.example.com/wp-content/plugins/panelalpha-migrator/');
+        define('PANELALPHA_MIGRATOR_MIGRATION_DIR', $abspath . 'wp-content/migrations/');
+        define('PANELALPHA_MIGRATOR_VERSION', '1.2.0');
         define('WP_SITEURL', 'https://old.example.com');
         define('WP_HOME', 'https://www.old.example.com');
 
@@ -182,10 +173,10 @@ final class WordPressEnvironmentTest extends TestCase
     public function testConfigInitBuildsTheSiteUrlFromTheRequest(): void
     {
         define('ABSPATH', $this->createTemporaryDirectory());
-        define('WP_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
-        define('WP_MIGRATOR_PLUGIN_URL', '');
-        define('WP_MIGRATOR_MIGRATION_DIR', '/tmp/migrations/');
-        define('WP_MIGRATOR_VERSION', '1.2.0');
+        define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
+        define('PANELALPHA_MIGRATOR_PLUGIN_URL', '');
+        define('PANELALPHA_MIGRATOR_MIGRATION_DIR', '/tmp/migrations/');
+        define('PANELALPHA_MIGRATOR_VERSION', '1.2.0');
         $_SERVER['HTTPS'] = 'on';
         $_SERVER['HTTP_HOST'] = 'shop.example.com';
 

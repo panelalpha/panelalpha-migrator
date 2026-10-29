@@ -2,18 +2,18 @@
 
 declare(strict_types=1);
 
-namespace WordpressMigrator\Tests;
+namespace PanelAlpha\Migrator\Tests;
 
 use PHPUnit\Framework\TestCase;
-use WordpressMigrator\Dto\ChunkInfo;
-use WordpressMigrator\Dto\FileChunkInfo;
-use WordpressMigrator\Dto\FileInfo;
-use WordpressMigrator\Dto\IndexInfo;
-use WordpressMigrator\Dto\Migration;
-use WordpressMigrator\Dto\MigrationSummary;
-use WordpressMigrator\Dto\TableChunk;
-use WordpressMigrator\Dto\TableInfo;
-use WordpressMigrator\Dto\TableStructure;
+use PanelAlpha\Migrator\Dto\ChunkInfo;
+use PanelAlpha\Migrator\Dto\FileChunkInfo;
+use PanelAlpha\Migrator\Dto\FileInfo;
+use PanelAlpha\Migrator\Dto\IndexInfo;
+use PanelAlpha\Migrator\Dto\Migration;
+use PanelAlpha\Migrator\Dto\MigrationSummary;
+use PanelAlpha\Migrator\Dto\TableChunk;
+use PanelAlpha\Migrator\Dto\TableInfo;
+use PanelAlpha\Migrator\Dto\TableStructure;
 
 final class DtoTest extends TestCase
 {

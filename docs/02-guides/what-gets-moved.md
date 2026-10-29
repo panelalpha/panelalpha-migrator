@@ -18,7 +18,7 @@ These are always left out:
 |---|---|
 | `wp-config.php` | The destination keeps its own, with its own database login. |
 | `.htaccess` in the main folder | The destination keeps its own server rules. |
-| `wp-content/plugins/wordpress-migrator/` | The plugin, with its token, stays as it is on each site. |
+| `wp-content/plugins/panelalpha-migrator/` | The plugin, with its token, stays as it is on each site. |
 | `wp-content/migrations/` | The plugin's working files. |
 | `node_modules`, `.git` and `.svn` folders, wherever they are | Development files a live site does not need. |
 
@@ -45,4 +45,4 @@ To copy only the database, or only the files, clear the other box under **Backup
 
 ## From the API
 
-The same choices are available when PanelAlpha or a script starts the migration: `backup_database`, `backup_files` and `exclusions` (commas or new lines both work there) in [Migrate over the API](../03-api/migrate-over-the-api.md#start-the-migration). A migration started over the API also leaves out any folder named `wordpress-migrator`. Other `.htaccess` files, such as the ones that protect WooCommerce uploads, are copied. The main folder's `.htaccess` can be sent separately afterwards: [Send the .htaccess file](../03-api/migrate-over-the-api.md#send-the-htaccess-file).
+The same choices are available when PanelAlpha or a script starts the migration: `backup_database`, `backup_files` and `exclusions` (commas or new lines both work there) in [Migrate over the API](../03-api/migrate-over-the-api.md#start-the-migration). A migration started over the API also leaves out any folder named `panelalpha-migrator`. Other `.htaccess` files, such as the ones that protect WooCommerce uploads, are copied. The main folder's `.htaccess` can be sent separately afterwards: [Send the .htaccess file](../03-api/migrate-over-the-api.md#send-the-htaccess-file).

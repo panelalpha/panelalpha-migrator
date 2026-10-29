@@ -1,35 +1,40 @@
 <?php
 
-namespace WordpressMigrator\Restore;
+namespace PanelAlpha\Migrator\Restore;
 
-use WordpressMigrator\Helpers\BinarySafeEncoder;
-use WordpressMigrator\Helpers\CreateStatementNormalizer;
-use WordpressMigrator\Helpers\Database;
-use WordpressMigrator\Helpers\PathProvider;
-use WordpressMigrator\Services\Migration\MigrationRegistry;
+use PanelAlpha\Migrator\Helpers\BinarySafeEncoder;
+use PanelAlpha\Migrator\Helpers\CreateStatementNormalizer;
+use PanelAlpha\Migrator\Services\Migration\MigrationRegistry;
 
 /**
  * Class TableRestoreHandler
  *
- * @package WordpressMigrator\Restore
+ * @package PanelAlpha\Migrator\Restore
  *
  * Handles the restoration of database tables.
+ * Tables are written under the temporary names of the migration table map.
+ * They replace the live tables later, in TableSwapper.
  */
 class TableRestoreHandler
 {
-    private Database $db;
+    private const MAX_STATEMENT_BYTES = 1048576;
+    private const PACKET_RESERVE_BYTES = 65536;
+    private const FALLBACK_PACKET_BYTES = 1048576;
+
+    /** @var \wpdb */
+    private object $wpdb;
     private MigrationRegistry $registry;
-    private ?string $destinationTablePrefix = null;
+    private ?int $maxAllowedPacket = null;
 
     /**
      * TableRestoreHandler constructor.
      *
-     * @param Database          $db
+     * @param \wpdb             $wpdb
      * @param MigrationRegistry $registry
      */
-    public function __construct(Database $db, MigrationRegistry $registry)
+    public function __construct(object $wpdb, MigrationRegistry $registry)
     {
-        $this->db = $db;
+        $this->wpdb = $wpdb;
         $this->registry = $registry;
     }
 
@@ -38,41 +43,33 @@ class TableRestoreHandler
      *
      * @param array $chunkData
      * @return array
+     * @throws MigrationConflictException
      * @throws \Exception
      */
     public function restoreStructure(array $chunkData): array
     {
-        $sourcePrefix = $chunkData['source_table_prefix']
-            ?? $chunkData['sourceTablePrefix']
-            ?? '';
-        $remapped = $this->remapTableName(
-            $chunkData['table']['name'],
-            $chunkData['table']['create_statement'],
-            $sourcePrefix
+        $names = $this->namesFor($chunkData['table']['name']);
+
+        $createStatement = CreateStatementNormalizer::forTempTable(
+            CreateStatementNormalizer::normalize($chunkData['table']['create_statement']),
+            $this->tempNames()
         );
-        $tableName = $remapped['name'];
-        $createStatement = $remapped['create_statement'];
 
         try {
-            $pdo = $this->db->getPdo();
-
-            $pdo->exec("SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO'");
-            $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-
-            $createStatement = CreateStatementNormalizer::normalize($createStatement);
-
-            $pdo->exec("DROP TABLE IF EXISTS `{$tableName}`");
-            $pdo->exec($createStatement);
+            $this->withImportSession(function () use ($names, $createStatement): void {
+                $this->run('DROP TABLE IF EXISTS ' . TableSwapper::quoteIdentifier($names['temp']));
+                $this->run($createStatement);
+            });
 
             $this->registry->markChunkRestored('table_structure', $chunkData);
 
             return [
                 'action' => 'restored_table_structure',
-                'table' => $tableName
+                'table' => $names['destination']
             ];
 
-        } catch (\PDOException $e) {
-            throw new \Exception("Failed to restore table structure for {$tableName}: " . $e->getMessage());
+        } catch (\RuntimeException $e) {
+            throw new \Exception(esc_html("Failed to restore table structure for {$names['destination']}: " . $e->getMessage()));
         }
     }
 
@@ -81,19 +78,13 @@ class TableRestoreHandler
      *
      * @param array $chunkData
      * @return array
+     * @throws MigrationConflictException
      * @throws \Exception
      */
     public function restoreData(array $chunkData): array
     {
-        $sourcePrefix = $chunkData['source_table_prefix']
-            ?? $chunkData['sourceTablePrefix']
-            ?? '';
-        $remapped = $this->remapTableName(
-            $chunkData['table']['name'],
-            $chunkData['table']['create_statement'] ?? '',
-            $sourcePrefix
-        );
-        $tableName = $remapped['name'];
+        $names = $this->namesFor($chunkData['table']['name']);
+        $tableName = $names['destination'];
         $columns = $chunkData['columns'];
         $data = $chunkData['data'];
         $checksum = $chunkData['checksum'];
@@ -114,7 +105,9 @@ class TableRestoreHandler
         }
 
         try {
-            $this->insertRows($tableName, $columns, $data);
+            $this->withImportSession(function () use ($names, $columns, $data): void {
+                $this->insertRows($names['temp'], $columns, $data);
+            });
             $this->registry->markChunkRestored('table_data', $chunkData);
 
             return [
@@ -123,78 +116,97 @@ class TableRestoreHandler
                 'chunk' => $chunkData['table']['chunk_info']['chunk_number']
             ];
 
-        } catch (\PDOException $e) {
-            throw new \Exception("Failed to restore table data for {$tableName}: " . $e->getMessage());
+        } catch (\RuntimeException $e) {
+            throw new \Exception(esc_html("Failed to restore table data for {$tableName}: " . $e->getMessage()));
         }
     }
 
     /**
-     * Remaps a source table name (and CREATE TABLE statement) to the destination prefix.
+     * Looks up the destination, temporary and backup names of a source table.
      *
-     * @param string $tableName
-     * @param string $createStatement
-     * @param string $sourcePrefix
-     * @return array{name: string, create_statement: string}
+     * @param string $sourceName
+     * @return array{destination: string, temp: string, backup: string}
+     * @throws MigrationConflictException
      */
-    private function remapTableName(string $tableName, string $createStatement, string $sourcePrefix): array
+    private function namesFor(string $sourceName): array
     {
-        if ($sourcePrefix === '') {
-            return [
-                'name' => $tableName,
-                'create_statement' => $createStatement,
-            ];
+        $map = $this->registry->getTableMap();
+
+        if (!isset($map[$sourceName])) {
+            throw new MigrationConflictException(esc_html("Table {$sourceName} is not part of this migration. Send the info chunk first."));
         }
 
-        $destinationPrefix = $this->getDestinationTablePrefix();
-        if ($sourcePrefix === $destinationPrefix) {
-            return [
-                'name' => $tableName,
-                'create_statement' => $createStatement,
-            ];
-        }
-
-        $remappedName = $tableName;
-        if (str_starts_with($tableName, $sourcePrefix)) {
-            $remappedName = $destinationPrefix . substr($tableName, strlen($sourcePrefix));
-        }
-
-        $remappedCreate = $createStatement;
-        if ($createStatement !== '') {
-            $remappedCreate = str_replace(
-                ['`' . $tableName . '`', $tableName],
-                ['`' . $remappedName . '`', $remappedName],
-                $createStatement
-            );
-        }
-
-        return [
-            'name' => $remappedName,
-            'create_statement' => $remappedCreate,
-        ];
+        return $map[$sourceName];
     }
 
     /**
-     * Lazily detects the table prefix used on the destination WordPress instance.
+     * Source table name => temporary table name, for the REFERENCES of foreign keys.
      *
-     * @return string
+     * @return array<string, string>
      */
-    private function getDestinationTablePrefix(): string
+    private function tempNames(): array
     {
-        if ($this->destinationTablePrefix !== null) {
-            return $this->destinationTablePrefix;
-        }
+        return array_map(static function (array $names): string {
+            return $names['temp'];
+        }, $this->registry->getTableMap());
+    }
+
+    /**
+     * Runs the callback with the session settings an import needs, and puts them back afterwards.
+     * Database errors do not print into the response, and queries are not checked for valid UTF-8,
+     * because raw bytes from BinarySafeEncoder are not.
+     *
+     * @param callable $callback
+     */
+    private function withImportSession(callable $callback): void
+    {
+        $wpdb = $this->wpdb;
+        $suppressErrors = $wpdb->suppress_errors(true);
+        $checkQuery = $wpdb->check_current_query;
+        $sqlMode = $wpdb->get_var('SELECT @@SESSION.sql_mode');
+        $foreignKeyChecks = $wpdb->get_var('SELECT @@SESSION.foreign_key_checks');
+        $charsetChanged = false;
 
         try {
-            $parser = new WpConfigParser(PathProvider::getAbsPath());
-            $config = $parser->parse();
-            $prefix = $config['table_prefix'] ?? null;
-            // An explicit empty prefix is valid. Fall back to wp_ only when it is missing.
-            $this->destinationTablePrefix = is_string($prefix) ? $prefix : 'wp_';
-        } catch (\Throwable $e) {
-            $this->destinationTablePrefix = 'wp_';
-        }
+            $this->run("SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO'");
+            $this->run('SET SESSION foreign_key_checks = 0');
 
-        return $this->destinationTablePrefix;
+            // On a utf8 destination 4-byte characters would be lost.
+            if ($wpdb->charset !== 'utf8mb4' && $wpdb->has_cap('utf8mb4')) {
+                $wpdb->set_charset($wpdb->dbh, 'utf8mb4', '');
+                $charsetChanged = true;
+            }
+
+            $callback();
+        } finally {
+            if ($charsetChanged) {
+                $wpdb->set_charset($wpdb->dbh);
+            }
+            if ($sqlMode !== null) {
+                $wpdb->query($wpdb->prepare('SET SESSION sql_mode = %s', $sqlMode));
+            }
+            if ($foreignKeyChecks !== null) {
+                $wpdb->query($wpdb->prepare('SET SESSION foreign_key_checks = %d', (int) $foreignKeyChecks));
+            }
+            $wpdb->check_current_query = $checkQuery;
+            $wpdb->suppress_errors($suppressErrors);
+        }
+    }
+
+    /**
+     * Runs a statement of the import.
+     *
+     * @param string $sql
+     * @throws \RuntimeException
+     */
+    private function run(string $sql): void
+    {
+        $this->wpdb->check_current_query = false;
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- the statements are SET SESSION, CREATE TABLE from the source and row values already passed through prepare()
+        if ($this->wpdb->query($sql) === false) {
+            throw new \RuntimeException(esc_html($this->wpdb->last_error));
+        }
     }
 
     /**
@@ -225,37 +237,101 @@ class TableRestoreHandler
     }
 
     /**
-     * Inserts rows into a table.
+     * Inserts rows into a table. Rows share a statement while it stays under the size limit.
+     * One commit per chunk instead of one per statement; a failed chunk leaves no rows behind.
      *
      * @param string $tableName
      * @param array  $columns
      * @param array  $data
+     * @throws \RuntimeException
      */
     private function insertRows(string $tableName, array $columns, array $data): void
     {
-        $pdo = $this->db->getPdo();
+        $packet = $this->maxAllowedPacket();
+        $limit = max(1024, min($packet - self::PACKET_RESERVE_BYTES, self::MAX_STATEMENT_BYTES));
+        $head = 'REPLACE INTO ' . TableSwapper::quoteIdentifier($tableName)
+            . ' (' . implode(', ', array_map([TableSwapper::class, 'quoteIdentifier'], $columns)) . ') VALUES ';
 
-        $pdo->exec("SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO'");
-        $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-
-        $placeholders = rtrim(str_repeat('?,', count($columns)), ',');
-        $columnsList = '`' . implode('`, `', $columns) . '`';
-        $sql = "REPLACE INTO `{$tableName}` ({$columnsList}) VALUES ({$placeholders})";
-
-        $stmt = $pdo->prepare($sql);
-
-        // One commit per chunk instead of one per row; a failed chunk leaves no rows behind.
-        $pdo->beginTransaction();
+        $this->run('START TRANSACTION');
 
         try {
+            $values = [];
+            $length = strlen($head);
+
             foreach ($data as $row) {
-                $stmt->execute($row);
+                $rowSql = $this->rowSql($row);
+
+                if (strlen($head) + strlen($rowSql) >= $packet) {
+                    throw new \RuntimeException("A row is larger than max_allowed_packet ({$packet} bytes) of the destination database");
+                }
+
+                if ($values !== [] && $length + strlen($rowSql) + 1 > $limit) {
+                    $this->run($head . implode(',', $values));
+                    $values = [];
+                    $length = strlen($head);
+                }
+
+                $values[] = $rowSql;
+                $length += strlen($rowSql) + 1;
             }
 
-            $pdo->commit();
+            if ($values !== []) {
+                $this->run($head . implode(',', $values));
+            }
+
+            $this->run('COMMIT');
         } catch (\Throwable $e) {
-            $pdo->rollBack();
+            $this->wpdb->query('ROLLBACK');
             throw $e;
         }
+    }
+
+    /**
+     * Builds one "(value, ...)" group. NULL stays a literal, everything else goes through prepare as a string.
+     *
+     * @param array $row
+     * @return string
+     */
+    private function rowSql(array $row): string
+    {
+        $placeholders = [];
+        $values = [];
+
+        foreach ($row as $value) {
+            if ($value === null) {
+                $placeholders[] = 'NULL';
+                continue;
+            }
+
+            $placeholders[] = '%s';
+
+            if (is_float($value)) {
+                $value = sprintf('%.17g', $value);
+            } elseif (is_bool($value)) {
+                $value = (int) $value;
+            }
+
+            $values[] = (string) $value;
+        }
+
+        $group = '(' . implode(',', $placeholders) . ')';
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- one %s is added for each value of the row
+        return $values === [] ? $group : $this->wpdb->prepare($group, $values);
+    }
+
+    /**
+     * Reads max_allowed_packet of the destination database once.
+     *
+     * @return int
+     */
+    private function maxAllowedPacket(): int
+    {
+        if ($this->maxAllowedPacket === null) {
+            $packet = (int) $this->wpdb->get_var('SELECT @@max_allowed_packet');
+            $this->maxAllowedPacket = $packet > 0 ? $packet : self::FALLBACK_PACKET_BYTES;
+        }
+
+        return $this->maxAllowedPacket;
     }
 }
