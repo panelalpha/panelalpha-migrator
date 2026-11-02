@@ -21,21 +21,47 @@ final class MigrationSecretOptionTest extends TestCase
 {
     use TemporaryDirectory;
 
-    public function testTokenGoesToTheDatabaseWhenTheHostRefusesTheSecretFile(): void
+    public function testTokenIsSavedOnlyAsAnOptionAndNoPhpFileIsWritten(): void
     {
-        eval('namespace { $GLOBALS["wpm_options"] = [];
-            function update_option($name, $value, $autoload = null) { $GLOBALS["wpm_options"][$name] = $value; return true; }
-            function get_option($name, $default = false) { return $GLOBALS["wpm_options"][$name] ?? $default; } }');
         $migrationDir = $this->createTemporaryDirectory();
         Config::set('migration_dir', $migrationDir);
-        // A folder in place of the secret file: the file cannot be written, as on WP Engine.
-        mkdir($migrationDir . 'mig_1.secret.php');
         $storage = new MigrationStorageService();
 
         $storage->saveMigrationData('mig_1', ['token' => 'destination-secret', 'destination_url' => 'https://new.example.com']);
 
         $this->assertStringNotContainsString('destination-secret', file_get_contents($migrationDir . 'mig_1.json'));
         $this->assertSame(['token' => 'destination-secret'], $GLOBALS['wpm_options']['panelalpha_migrator_secret_mig_1']);
+        $this->assertFalse($GLOBALS['wpm_option_autoload']['panelalpha_migrator_secret_mig_1']);
+        $this->assertFileDoesNotExist($migrationDir . 'mig_1.secret.php');
+        $this->assertSame([], glob($migrationDir . '*.php'));
         $this->assertSame('destination-secret', $storage->loadMigrationData('mig_1')['token']);
+    }
+
+    public function testSaveFailsWhenTheOptionCannotBeStored(): void
+    {
+        Config::set('migration_dir', $this->createTemporaryDirectory());
+        $GLOBALS['wpm_options_read_only'] = true;
+
+        $this->expectException(\RuntimeException::class);
+        (new MigrationStorageService())->saveMigrationData('mig_1', ['token' => 'destination-secret']);
+    }
+
+    public function testSecretFileFromAnOlderVersionIsStillRead(): void
+    {
+        $migrationDir = $this->createTemporaryDirectory();
+        Config::set('migration_dir', $migrationDir);
+        file_put_contents($migrationDir . 'mig_1.secret.php', "<?php exit; ?>\n" . json_encode(['token' => 'old-secret']));
+
+        $this->assertSame(['token' => 'old-secret'], (new MigrationStorageService())->loadSecrets('mig_1'));
+    }
+
+    public function testOptionWinsOverAnOldSecretFile(): void
+    {
+        $migrationDir = $this->createTemporaryDirectory();
+        Config::set('migration_dir', $migrationDir);
+        file_put_contents($migrationDir . 'mig_1.secret.php', "<?php exit; ?>\n" . json_encode(['token' => 'old-secret']));
+        $GLOBALS['wpm_options']['panelalpha_migrator_secret_mig_1'] = ['token' => 'new-secret'];
+
+        $this->assertSame(['token' => 'new-secret'], (new MigrationStorageService())->loadSecrets('mig_1'));
     }
 }

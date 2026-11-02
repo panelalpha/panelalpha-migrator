@@ -111,6 +111,7 @@ class HtaccessService
     {
         $htaccessPath = PathProvider::getAbsPath() . '.htaccess';
 
+        // phpcs:ignore PluginCheck.CodeAnalysis.WriteFile.ABSPATHDetected -- a migration writes the .htaccess of the migrated site root on the destination
         $bytesWritten = file_put_contents($htaccessPath, $content);
 
         if ($bytesWritten === false) {

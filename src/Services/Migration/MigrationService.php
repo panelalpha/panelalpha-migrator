@@ -4,6 +4,7 @@ namespace PanelAlpha\Migrator\Services\Migration;
 
 use Exception;
 use PanelAlpha\Migrator\Api\RouteProvider;
+use PanelAlpha\Migrator\Helpers\Log;
 use PanelAlpha\Migrator\Helpers\Config;
 use PanelAlpha\Migrator\Helpers\DestinationEndpoint;
 use PanelAlpha\Migrator\Helpers\ExclusionParser;
@@ -103,7 +104,7 @@ class MigrationService
 
         if (!empty($ip) && $insecureTls) {
             $migrationDataArray['insecure_tls'] = true;
-            error_log('MIGRATOR: HTTPS certificate checks are off for migration ' . $migrationData->migrationId . ' (manual IP with insecure_tls).');
+            Log::error('MIGRATOR: HTTPS certificate checks are off for migration ' . $migrationData->migrationId . ' (manual IP with insecure_tls).');
         }
 
         if (!empty($pinnedIp)) {

@@ -20,7 +20,7 @@ One plugin on both sites. One address to paste. No FTP, no SQL dump.
 </p>
 
 <p>
-<img src="https://img.shields.io/badge/version-1.2.1-2f8f46" alt="Version 1.2.1">
+<img src="https://img.shields.io/badge/version-1.2.2-2f8f46" alt="Version 1.2.2">
 <a href="#before-you-start"><img src="https://img.shields.io/badge/WordPress-plugin-21759b?logo=wordpress&logoColor=white" alt="WordPress plugin"></a>
 <a href="#before-you-start"><img src="https://img.shields.io/badge/PHP-7.4%2B-777bb4?logo=php&logoColor=white" alt="PHP 7.4 or newer"></a>
 <a href="docs/03-api/migrate-over-the-api.md"><img src="https://img.shields.io/badge/REST_API-remote--sync-6f42c1" alt="REST API"></a>

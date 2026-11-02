@@ -50,7 +50,7 @@ class Filesystem
         if (!file_exists($path)) {
             $result = wp_mkdir_p($path);
             if (!$result) {
-                error_log("PanelAlpha Migrator: Failed to create directory: {$path}");
+                Log::error("PanelAlpha Migrator: Failed to create directory: {$path}");
             }
             return $result;
         }

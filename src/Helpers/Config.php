@@ -86,15 +86,16 @@ class Config
      */
     private static function getSiteUrl(): string
     {
-        // Try to get from WordPress options or use server variables
+        // The request headers are not trusted, so the URL only comes from WordPress or its constant.
+        if (function_exists('get_site_url')) {
+            return (string) get_site_url();
+        }
+
         if (defined('WP_SITEURL')) {
             return WP_SITEURL;
         }
 
-        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-
-        return "{$protocol}://{$host}";
+        return 'http://localhost';
     }
 
     /**

@@ -138,8 +138,8 @@ class PathProvider
     }
 
     /**
-     * Gets the full path to the file holding a migration's secrets.
-     * It is a PHP file that prints nothing, so it cannot be read over HTTP.
+     * Gets the full path to the file that held a migration's secrets in version 1.2.1.
+     * It is only read and removed now; secrets are kept in the database.
      *
      * @param string $migrationId Migration identifier
      * @return string

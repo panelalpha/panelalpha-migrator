@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace PanelAlpha\Migrator\Tests;
 
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use PanelAlpha\Migrator\Helpers\MigrationLock;
 
@@ -16,7 +19,7 @@ final class MigrationLockTest extends TestCase
     protected function setUp(): void
     {
         $this->directory = sys_get_temp_dir() . '/panelalpha-migrator-lock-test-' . bin2hex(random_bytes(6));
-        $this->lockFile = $this->directory . '/nested/panelalpha-migrator-lock.php';
+        $this->lockFile = $this->directory . '/nested/lock.json';
     }
 
     protected function tearDown(): void
@@ -206,27 +209,72 @@ final class MigrationLockTest extends TestCase
         $this->assertGreaterThan(time() - 5, $lock->getLockInfo()['timestamp']);
     }
 
-    public function testLockFileIsAPhpFileThatPrintsNothing(): void
+    public function testLockFileIsPlainJson(): void
     {
         $lock = new MigrationLock($this->lockFile);
         $lock->acquire('mig_1');
         $lock->update(['phase' => 'files']);
+        $lock->exclusive('mig_1', static fn () => null);
 
-        $this->assertStringStartsWith("<?php exit; ?>\n", file_get_contents($this->lockFile));
-        $this->assertSame('', (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($this->lockFile)));
-        $this->assertSame('files', $lock->getLockInfo()['phase']);
+        $content = file_get_contents($this->lockFile);
+        $this->assertStringStartsWith('{', $content);
+        $this->assertStringNotContainsString('<?', $content);
+        $this->assertSame('files', json_decode($content, true)['phase']);
     }
 
-    public function testLockFromAnOlderVersionIsMovedAndStillHonored(): void
+    public function testExclusiveRefusesAnotherCallerWhileTheLockIsHeld(): void
+    {
+        $lock = new MigrationLock($this->lockFile);
+        $lock->acquire('mig_1');
+
+        $handle = fopen($this->lockFile, 'r+');
+        flock($handle, LOCK_EX);
+        try {
+            $this->expectException(\RuntimeException::class);
+            $lock->exclusive('mig_1', static fn () => null);
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+    }
+
+    public function testDefaultFileNameIsAJsonFile(): void
+    {
+        $this->assertMatchesRegularExpression('/^lock(-[0-9a-f]{20})?\.json$/', MigrationLock::defaultFileName());
+    }
+
+    /**
+     * The services build the lock when the plugin loads, before wp_hash() exists.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testDefaultNameIsResolvedOnFirstUseNotWhenBuilt(): void
+    {
+        $this->assertFalse(function_exists('wp_hash'));
+        $lock = new MigrationLock();
+
+        eval('function wp_hash($data) { return md5("salt" . $data); }');
+
+        $this->assertSame('lock-' . substr(md5('saltpanelalpha-migrator-lock'), 0, 20) . '.json', basename($lock->getLockFilePath()));
+    }
+
+    /**
+     * @dataProvider legacyLockProvider
+     */
+    #[DataProvider('legacyLockProvider')]
+    public function testLockFromAnOlderVersionIsAdoptedAndStillHonored(string $legacyName, string $prefix): void
     {
         $content = sys_get_temp_dir() . '/panelalpha-migrator-content-' . bin2hex(random_bytes(6));
         mkdir($content);
-        $legacy = $content . '/panelalpha-migrator-lock.json';
-        file_put_contents($legacy, json_encode(['migration_id' => 'mig_old', 'timestamp' => time()]));
+        $legacy = $content . '/' . $legacyName;
+        file_put_contents($legacy, $prefix . json_encode(['migration_id' => 'mig_old', 'timestamp' => time()]));
 
         $reflection = new \ReflectionClass(MigrationLock::class);
         $lock = $reflection->newInstanceWithoutConstructor();
-        foreach (['lockFile' => $content . '/panelalpha-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
+        foreach (['lockFile' => $this->lockFile, 'legacyDir' => $content, 'timeout' => 900] as $name => $value) {
             $property = $reflection->getProperty($name);
             if (PHP_VERSION_ID < 80100) {
                 $property->setAccessible(true);
@@ -237,41 +285,19 @@ final class MigrationLockTest extends TestCase
         $this->assertTrue($lock->isLocked());
         $this->assertFalse($lock->acquire('mig_new'));
         $this->assertFileDoesNotExist($legacy);
+        $this->assertFileExists($this->lockFile);
         $this->assertSame('mig_old', $lock->getLockInfo()['migration_id']);
+        $this->assertStringStartsWith('{', file_get_contents($this->lockFile));
 
         $lock->release();
         @rmdir($content);
     }
 
-    public function testJsonLockIsUsedWhenTheHostRefusesNewPhpFiles(): void
+    public static function legacyLockProvider(): array
     {
-        $content = sys_get_temp_dir() . '/panelalpha-migrator-content-' . bin2hex(random_bytes(6));
-        mkdir($content);
-        // A dangling symlink: the .php lock does not exist and cannot be created, as on WP Engine.
-        symlink($content . '/missing/target', $content . '/panelalpha-migrator-lock.php');
-        $legacy = $content . '/panelalpha-migrator-lock.json';
-
-        $reflection = new \ReflectionClass(MigrationLock::class);
-        $lock = $reflection->newInstanceWithoutConstructor();
-        foreach (['lockFile' => $content . '/panelalpha-migrator-lock.php', 'legacyLockFile' => $legacy, 'timeout' => 900] as $name => $value) {
-            $property = $reflection->getProperty($name);
-            if (PHP_VERSION_ID < 80100) {
-                $property->setAccessible(true);
-            }
-            $property->setValue($lock, $value);
-        }
-
-        $this->assertTrue($lock->acquire('mig_1'));
-        $this->assertFileExists($legacy);
-        $this->assertTrue($lock->isLocked());
-        $this->assertFalse($lock->acquire('mig_2'));
-        $this->assertSame('ran', $lock->exclusive('mig_1', fn() => 'ran'));
-        $this->assertSame('mig_1', $lock->getLockInfo()['migration_id']);
-        $this->assertTrue($lock->release('mig_1'));
-        $this->assertFileDoesNotExist($legacy);
-        $this->assertFalse($lock->isLocked());
-
-        unlink($content . '/panelalpha-migrator-lock.php');
-        rmdir($content);
+        return [
+            'guarded php file' => ['panelalpha-migrator-lock.php', "<?php exit; ?>\n"],
+            'json file' => ['panelalpha-migrator-lock.json', ''],
+        ];
     }
 }

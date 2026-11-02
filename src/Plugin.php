@@ -6,6 +6,7 @@ namespace PanelAlpha\Migrator;
 
 use PanelAlpha\Migrator\Admin\AdminPage;
 use PanelAlpha\Migrator\Api\RouteProvider;
+use PanelAlpha\Migrator\Helpers\Log;
 use PanelAlpha\Migrator\Helpers\Config;
 use PanelAlpha\Migrator\Helpers\Filesystem;
 use PanelAlpha\Migrator\Helpers\PathProvider;
@@ -170,7 +171,7 @@ class Plugin
         }
 
         if (@file_put_contents($indexFile, "<?php\n// Silence is golden.\n") === false) {
-            error_log("PanelAlpha Migrator: Failed to create index file: {$indexFile}");
+            Log::error("PanelAlpha Migrator: Failed to create index file: {$indexFile}");
         }
     }
 
@@ -185,7 +186,7 @@ class Plugin
 
         if (!wp_is_writable($parentDir)) {
             $errorMessage = "PanelAlpha Migrator: Parent directory is not writable: {$parentDir}";
-            error_log($errorMessage);
+            Log::error($errorMessage);
 
             $this->showAdminNotice(
                 'PanelAlpha Migrator: Cannot create migration directory. Please ensure ' .
@@ -204,7 +205,7 @@ class Plugin
         $result = Filesystem::mkdirP($migrationDir);
 
         if (!$result) {
-            error_log("PanelAlpha Migrator: Failed to create migration directory: {$migrationDir}");
+            Log::error("PanelAlpha Migrator: Failed to create migration directory: {$migrationDir}");
         }
     }
 
@@ -225,7 +226,7 @@ class Plugin
             . "<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n";
 
         if (@file_put_contents($htaccessFile, $htaccessContent) === false) {
-            error_log("PanelAlpha Migrator: Failed to create .htaccess file: {$htaccessFile}");
+            Log::error("PanelAlpha Migrator: Failed to create .htaccess file: {$htaccessFile}");
         }
     }
 

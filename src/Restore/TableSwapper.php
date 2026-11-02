@@ -321,6 +321,7 @@ class TableSwapper
         $wpdb = $this->wpdb;
         $pattern = $wpdb->esc_like($prefix) . '%';
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- lists the temporary tables of a migration, so caching would be wrong
         return (array) $wpdb->get_col($wpdb->prepare('SHOW TABLES LIKE %s', $pattern));
     }
 
@@ -335,7 +336,7 @@ class TableSwapper
         $previous = $this->wpdb->suppress_errors(true);
 
         try {
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- SET SESSION and RENAME TABLE cannot be prepared; table names are quoted with quoteIdentifier()
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- RENAME TABLE swaps and temporary tables, so caching does not apply; SET SESSION and RENAME TABLE cannot be prepared; table names are quoted with quoteIdentifier()
             return $this->wpdb->query($sql);
         } finally {
             $this->wpdb->suppress_errors($previous);

@@ -23,6 +23,7 @@ final class MigrationStorageServiceTest extends TestCase
 
     protected function setUp(): void
     {
+        $GLOBALS['wpm_options'] = [];
         $this->migrationDir = $this->createTemporaryDirectory() . 'migrations/';
         Config::set('migration_dir', $this->migrationDir);
         $this->storage = new MigrationStorageService();
@@ -157,10 +158,8 @@ final class MigrationStorageServiceTest extends TestCase
         $manifest = file_get_contents($this->migrationDir . 'mig_1.json');
         $this->assertStringNotContainsString('destination-secret', $manifest);
         $this->assertStringNotContainsString('source-secret', $manifest);
-        $secretFile = $this->migrationDir . 'mig_1.secret.php';
-        $this->assertStringStartsWith("<?php exit; ?>\n", file_get_contents($secretFile));
-        $this->assertStringNotContainsString('source-secret', file_get_contents($secretFile));
-        $this->assertSame('', (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($secretFile)));
+        $this->assertFileDoesNotExist($this->migrationDir . 'mig_1.secret.php');
+        $this->assertSame(['token' => 'destination-secret'], $GLOBALS['wpm_options']['panelalpha_migrator_secret_mig_1']);
 
         $loaded = $this->storage->loadMigrationData('mig_1');
         $this->assertSame('destination-secret', $loaded['token']);

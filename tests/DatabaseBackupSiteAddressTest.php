@@ -29,8 +29,7 @@ final class DatabaseBackupSiteAddressTest extends TestCase
     public function testSiteAddressSetInWpConfigReplacesTheOneStoredInTheDatabase(): void
     {
         // As on Bitnami: wp-config.php sets the address, the database keeps http://127.0.0.1.
-        eval('namespace { function get_option($name, $default = false) {
-            return ["siteurl" => "https://old.example.test", "home" => "https://old.example.test"][$name] ?? $default; } }');
+        $GLOBALS['wpm_options'] = ['siteurl' => 'https://old.example.test', 'home' => 'https://old.example.test'];
         Config::set('migration_dir', $this->createTemporaryDirectory());
         Config::set('allowed_destinations', ['127.0.0.1']);
         $storage = new MigrationStorageService();

@@ -17,7 +17,8 @@ use PanelAlpha\Migrator\Helpers\JsonCompressor;
  */
 class MigrationStorageService
 {
-    private const SECRET_GUARD = "<?php exit; ?>\n";
+    // The guard line version 1.2.1 put before the JSON in the secret file; only read, never written.
+    private const LEGACY_SECRET_GUARD = "<?php exit; ?>\n";
     private const SECRET_OPTION_PREFIX = 'panelalpha_migrator_secret_';
 
     /**
@@ -56,18 +57,11 @@ class MigrationStorageService
         $public = array_diff_key($migrationDataArray, $secrets, array_flip(self::DROPPED_KEYS));
 
         if ($secrets !== []) {
-            $secretPath = PathProvider::getMigrationSecretFilePath($migrationId);
-            $secretJson = json_encode($secrets, JSON_UNESCAPED_SLASHES);
-            $saved = $secretJson !== false && Filesystem::writeFileAtomic($secretPath, self::SECRET_GUARD . $secretJson);
+            $optionName = self::SECRET_OPTION_PREFIX . $migrationId;
+            update_option($optionName, $secrets, false);
 
-            // Hosts such as WP Engine refuse new .php files; the WordPress database is the fallback.
-            if (!$saved && function_exists('update_option')) {
-                update_option(self::SECRET_OPTION_PREFIX . $migrationId, $secrets, false);
-                $saved = get_option(self::SECRET_OPTION_PREFIX . $migrationId) === $secrets;
-            }
-
-            if (!$saved) {
-                throw new \RuntimeException(esc_html("Failed to save migration data to: {$secretPath}"));
+            if (get_option($optionName) !== $secrets) {
+                throw new \RuntimeException(esc_html("Failed to save migration data to option: {$optionName}"));
             }
         }
 
@@ -107,8 +101,8 @@ class MigrationStorageService
     }
 
     /**
-     * Loads the secrets stored next to a migration manifest, or in the
-     * WordPress database when the host refused the file.
+     * Loads the secrets stored in the WordPress database.
+     * A migration started on version 1.2.1 has them in a .secret.php file instead; that is still read.
      * A secret still present in an old manifest is kept when there is neither.
      *
      * @param string $migrationId
@@ -116,14 +110,17 @@ class MigrationStorageService
      */
     public function loadSecrets(string $migrationId): array
     {
-        $content = @file_get_contents(PathProvider::getMigrationSecretFilePath($migrationId));
-        if (!is_string($content) || strncmp($content, self::SECRET_GUARD, strlen(self::SECRET_GUARD)) !== 0) {
-            $stored = function_exists('get_option') ? get_option(self::SECRET_OPTION_PREFIX . $migrationId) : false;
-
-            return is_array($stored) ? $stored : [];
+        $stored = function_exists('get_option') ? get_option(self::SECRET_OPTION_PREFIX . $migrationId) : false;
+        if (is_array($stored)) {
+            return $stored;
         }
 
-        $secrets = json_decode(substr($content, strlen(self::SECRET_GUARD)), true);
+        $content = @file_get_contents(PathProvider::getMigrationSecretFilePath($migrationId));
+        if (!is_string($content) || strncmp($content, self::LEGACY_SECRET_GUARD, strlen(self::LEGACY_SECRET_GUARD)) !== 0) {
+            return [];
+        }
+
+        $secrets = json_decode(substr($content, strlen(self::LEGACY_SECRET_GUARD)), true);
 
         return is_array($secrets) ? $secrets : [];
     }

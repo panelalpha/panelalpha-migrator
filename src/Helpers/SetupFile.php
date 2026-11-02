@@ -41,7 +41,7 @@ class SetupFile
 
         // A token file that stays on disk must not be acted on.
         if (file_exists($path)) {
-            error_log('PanelAlpha Migrator: the setup file could not be deleted, so it was not imported.');
+            Log::error('PanelAlpha Migrator: the setup file could not be deleted, so it was not imported.');
 
             return false;
         }
@@ -65,10 +65,10 @@ class SetupFile
         if (array_key_exists('token', $data)) {
             if (is_string($data['token']) && preg_match('/^[0-9a-f]{64}$/i', $data['token'])) {
                 if (!TokenHelper::saveToken($data['token'])) {
-                    error_log('PanelAlpha Migrator: the token from the setup file could not be saved.');
+                    Log::error('PanelAlpha Migrator: the token from the setup file could not be saved.');
                 }
             } else {
-                error_log('PanelAlpha Migrator: the token in the setup file is not valid and was ignored.');
+                Log::error('PanelAlpha Migrator: the token in the setup file is not valid and was ignored.');
             }
         }
 

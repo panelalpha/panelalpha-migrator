@@ -5,6 +5,7 @@ namespace PanelAlpha\Migrator\Api\Controllers;
 use PanelAlpha\Migrator\Api\Middleware\InvalidRequestException;
 use PanelAlpha\Migrator\Api\Middleware\RequestValidator;
 use PanelAlpha\Migrator\Api\Middleware\ResponseFormatter;
+use PanelAlpha\Migrator\Helpers\Log;
 use PanelAlpha\Migrator\Helpers\Config;
 use PanelAlpha\Migrator\Helpers\PathProvider;
 use PanelAlpha\Migrator\Helpers\TokenHelper;
@@ -144,7 +145,7 @@ class ReceiveController
         } catch (InsufficientDiskSpaceException $e) {
             return $this->responseFormatter->error('insufficient_disk_space', $e->getMessage(), ['status' => 400]);
         } catch (\Throwable $e) {
-            error_log('PanelAlpha Migrator: Processing failed: ' . $e->getMessage());
+            Log::error('PanelAlpha Migrator: Processing failed: ' . $e->getMessage());
 
             return $this->responseFormatter->error(
                 'processing_failed',
@@ -250,7 +251,7 @@ class ReceiveController
         } catch (InvalidRequestException $e) {
             return $this->responseFormatter->error($e->getErrorCode(), $e->getMessage(), ['status' => 400]);
         } catch (\Throwable $e) {
-            error_log('PanelAlpha Migrator: Status check failed: ' . $e->getMessage());
+            Log::error('PanelAlpha Migrator: Status check failed: ' . $e->getMessage());
 
             return $this->responseFormatter->error(
                 'status_failed',

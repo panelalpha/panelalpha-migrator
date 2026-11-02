@@ -321,6 +321,7 @@ class DatabaseScanner
     public function getChecksum($data): string
     {
         $previousPrecision = ini_get('serialize_precision');
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- float values must be encoded the same way on both sites, so the precision is set for this one call
         ini_set('serialize_precision', '-1');
 
         $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE);
@@ -331,6 +332,7 @@ class DatabaseScanner
 
         $hash = hash('sha256', $json);
 
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- puts the precision back
         ini_set('serialize_precision', $previousPrecision);
 
         return $hash;
@@ -375,7 +377,7 @@ class DatabaseScanner
     private function results(string $query, string $output = 'OBJECT', bool $flush = false): array
     {
         return $this->read(function ($wpdb) use ($query, $output, $flush): array {
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- every caller passes a statement built with prepare()
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- whole-table reads of the migrated data, so caching would return stale rows; every caller passes a statement built with prepare()
             $rows = $wpdb->get_results($query, $output);
             $this->assertNoError($wpdb);
 
@@ -397,7 +399,7 @@ class DatabaseScanner
     private function scalar(string $query)
     {
         return $this->read(function ($wpdb) use ($query) {
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- every caller passes a statement built with prepare()
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- whole-table reads of the migrated data, so caching would return stale rows; every caller passes a statement built with prepare()
             $value = $wpdb->get_var($query);
             $this->assertNoError($wpdb);
 
