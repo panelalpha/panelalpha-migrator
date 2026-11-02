@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PanelAlpha\Migrator\Restore;
 
+use PanelAlpha\Migrator\Helpers\Log;
 use PanelAlpha\Migrator\Helpers\Config;
 use PanelAlpha\Migrator\Helpers\Filesystem;
 use PanelAlpha\Migrator\Helpers\PathProvider;
@@ -171,6 +172,7 @@ class ReceiveFinalizer
     private function run(MigrationRegistry $registry, string $migrationId, array $skippedFiles, array $journal): array
     {
         if (function_exists('set_time_limit')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- finalizing a large site can take longer than the default limit
             @set_time_limit(self::TIME_LIMIT);
         }
 
@@ -310,7 +312,7 @@ class ReceiveFinalizer
         try {
             $staged->finish();
         } catch (\Throwable $e) {
-            error_log("PanelAlpha Migrator: Migration {$migrationId} could not clean up its staged files: " . $e->getMessage());
+            Log::error("PanelAlpha Migrator: Migration {$migrationId} could not clean up its staged files: " . $e->getMessage());
         }
 
         $this->leaveMaintenance();
@@ -321,7 +323,7 @@ class ReceiveFinalizer
         $warnings = $journal['warnings'] ?? [];
 
         if ($moved > 0) {
-            error_log("MIGRATION COMPLETE: Migration {$migrationId} moved {$moved} staged files and folders into place.");
+            Log::error("MIGRATION COMPLETE: Migration {$migrationId} moved {$moved} staged files and folders into place.");
         }
 
         $result = [
@@ -330,13 +332,13 @@ class ReceiveFinalizer
         ];
 
         if ($skipped !== []) {
-            error_log("MIGRATION COMPLETE: Migration {$migrationId} skipped files deleted on the source: " . implode(', ', $skipped));
+            Log::error("MIGRATION COMPLETE: Migration {$migrationId} skipped files deleted on the source: " . implode(', ', $skipped));
             $result['skipped_files'] = $skipped;
             $result['warning'] = 'Some files were deleted on the source before they could be sent and were skipped.';
         }
 
         if ($warnings !== []) {
-            error_log("MIGRATION COMPLETE: Migration {$migrationId} did not replace: " . implode('; ', $warnings));
+            Log::error("MIGRATION COMPLETE: Migration {$migrationId} did not replace: " . implode('; ', $warnings));
             $result['warnings'] = $warnings;
         }
 
@@ -349,7 +351,7 @@ class ReceiveFinalizer
         try {
             (new ReceiveCleanup($this->wpdb))->removeOtherBackups($migrationId);
         } catch (\Throwable $e) {
-            error_log("PanelAlpha Migrator: Removing older backups failed: " . $e->getMessage());
+            Log::error("PanelAlpha Migrator: Removing older backups failed: " . $e->getMessage());
         }
 
         return $result;
@@ -365,7 +367,7 @@ class ReceiveFinalizer
      */
     private function fail(MigrationRegistry $registry, string $migrationId, array $journal, \Throwable $e): void
     {
-        error_log("PanelAlpha Migrator: Finalizing migration {$migrationId} failed: " . $e->getMessage());
+        Log::error("PanelAlpha Migrator: Finalizing migration {$migrationId} failed: " . $e->getMessage());
 
         $this->leaveMaintenance();
 
@@ -375,7 +377,7 @@ class ReceiveFinalizer
         try {
             self::writeJournal($migrationId, $journal);
         } catch (\Throwable $writeError) {
-            error_log('PanelAlpha Migrator: ' . $writeError->getMessage());
+            Log::error('PanelAlpha Migrator: ' . $writeError->getMessage());
         }
 
         $registry->updateStatus('finalize_failed');
@@ -408,6 +410,7 @@ class ReceiveFinalizer
     private function keepThisPluginActive(string $optionsTable): void
     {
         $wpdb = $this->wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- reads the option of the table that was just restored, so caching would be wrong
         $value = $wpdb->get_var($wpdb->prepare('SELECT option_value FROM %i WHERE option_name = %s', $optionsTable, 'active_plugins'));
         $active = is_string($value) ? @unserialize($value, ['allowed_classes' => false]) : false;
         $basename = $this->pluginBasename();
@@ -422,6 +425,7 @@ class ReceiveFinalizer
         $previous = $wpdb->suppress_errors(true);
 
         try {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- writes the option of the table that was just restored
             $updated = $wpdb->query($wpdb->prepare(
                 'UPDATE %i SET option_value = %s WHERE option_name = %s',
                 $optionsTable,
@@ -454,6 +458,7 @@ class ReceiveFinalizer
         $previous = $wpdb->suppress_errors(true);
 
         try {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- writes the options of the table that was just restored
             $deleted = $wpdb->query($wpdb->prepare(
                 'DELETE FROM %i WHERE option_name IN (%s, %s)',
                 $optionsTable,
@@ -463,6 +468,7 @@ class ReceiveFinalizer
             $error = $wpdb->last_error;
 
             if ($deleted !== false) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- writes the options of the table that was just restored
                 $copied = $wpdb->query($wpdb->prepare(
                     'INSERT INTO %i (option_name, option_value, autoload) SELECT option_name, option_value, autoload FROM %i WHERE option_name IN (%s, %s)',
                     $optionsTable,
@@ -498,6 +504,7 @@ class ReceiveFinalizer
      */
     private function enterMaintenance(): void
     {
+        // phpcs:ignore PluginCheck.CodeAnalysis.WriteFile.ABSPATHDetected -- the .maintenance file is the same one WordPress core writes during updates
         @file_put_contents($this->abspath . '.maintenance', '<?php $upgrading = ' . time() . '; ?>');
     }
 

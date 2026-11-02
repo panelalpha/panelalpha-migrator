@@ -170,7 +170,7 @@ final class WordPressEnvironmentTest extends TestCase
         $this->assertFalse(Config::get('show_mode_switcher'));
     }
 
-    public function testConfigInitBuildsTheSiteUrlFromTheRequest(): void
+    public function testConfigInitIgnoresTheHostHeader(): void
     {
         define('ABSPATH', $this->createTemporaryDirectory());
         define('PANELALPHA_MIGRATOR_PLUGIN_DIR', $this->createTemporaryDirectory());
@@ -178,12 +178,12 @@ final class WordPressEnvironmentTest extends TestCase
         define('PANELALPHA_MIGRATOR_MIGRATION_DIR', '/tmp/migrations/');
         define('PANELALPHA_MIGRATOR_VERSION', '1.2.0');
         $_SERVER['HTTPS'] = 'on';
-        $_SERVER['HTTP_HOST'] = 'shop.example.com';
+        $_SERVER['HTTP_HOST'] = 'evil.example.com';
 
         Config::init();
 
-        $this->assertSame('https://shop.example.com', Config::get('site_url'));
-        $this->assertSame('https://shop.example.com', Config::get('home_url'));
+        $this->assertSame('http://localhost', Config::get('site_url'));
+        $this->assertSame('http://localhost', Config::get('home_url'));
         $this->assertSame('unknown', Config::get('wp_version'));
         $this->assertSame('source', Config::get('mode'));
     }

@@ -29,9 +29,9 @@ final class UninstallerTest extends TestCase
     {
         require_once __DIR__ . '/Support/WordPressFunctions.php';
 
-        eval('namespace { $GLOBALS["wpm_options"] = []; $GLOBALS["wpm_cleared"] = [];
-            function delete_option($name) { unset($GLOBALS["wpm_options"][$name]); return true; }
-            function wp_clear_scheduled_hook($hook) { $GLOBALS["wpm_cleared"][] = $hook; return 0; } }');
+        $GLOBALS['wpm_options'] = [];
+        $GLOBALS['wpm_cleared'] = [];
+        eval('namespace { function wp_clear_scheduled_hook($hook) { $GLOBALS["wpm_cleared"][] = $hook; return 0; } }');
 
         // RecordingWpdb has no options table, so the secret option names are answered here.
         $this->wpdb = new class extends \stdClass {
@@ -124,6 +124,8 @@ final class UninstallerTest extends TestCase
         self::writeFile($dir . '/my-folder/file.txt', 'not ours');
         self::writeFile($dir . '/cache/file.txt', 'not ours');
         self::writeFile($dir . '/cache.json', 'not ours');
+        self::writeFile($dir . '/lock.json', '{}');
+        self::writeFile($dir . '/lock-0123456789abcdef0123.json', '{}');
         self::writeFile($this->contentDir . '/panelalpha-migrator-lock.php', 'x');
         self::writeFile($this->contentDir . '/panelalpha-migrator-lock.json', 'x');
         self::writeFile($this->contentDir . '/panelalpha-migrator-setup.php', 'x');

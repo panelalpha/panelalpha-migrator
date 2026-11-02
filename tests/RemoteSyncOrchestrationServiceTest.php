@@ -465,10 +465,10 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         );
     }
 
-    public function testResultFallsBackToServerGlobalsOverHttps(): void
+    public function testResultFallsBackToTheConfiguredSiteUrl(): void
     {
-        $_SERVER['HTTPS'] = 'on';
-        $_SERVER['HTTP_HOST'] = 'shop.example.com';
+        Config::set('site_url', 'https://shop.example.com');
+        $_SERVER['HTTP_HOST'] = 'evil.example.com';
         $this->migrationService->method('scanAndPrepareMigration')->willReturn(['migrationId' => 'mig_1']);
 
         $result = $this->service()->startMigration($this->validOptions());
@@ -480,20 +480,6 @@ final class RemoteSyncOrchestrationServiceTest extends TestCase
         $this->assertSame(
             'https://shop.example.com/wp-json/panelalpha-migrator/v1/remote-sync/process-batch',
             $result['process_batch_url']
-        );
-    }
-
-    public function testResultFallsBackToServerGlobalsOverHttp(): void
-    {
-        unset($_SERVER['HTTPS']);
-        $_SERVER['HTTP_HOST'] = 'shop.example.com';
-        $this->migrationService->method('scanAndPrepareMigration')->willReturn(['migrationId' => 'mig_1']);
-
-        $result = $this->service()->startMigration($this->validOptions());
-
-        $this->assertSame(
-            'http://shop.example.com/wp-json/panelalpha-migrator/v1/remote-sync/status/mig_1',
-            $result['status_url']
         );
     }
 

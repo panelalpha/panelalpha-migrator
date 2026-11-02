@@ -274,8 +274,7 @@ class RemoteSyncOrchestrationService
         $baseUrl = Config::get('base_url', '');
 
         if (empty($baseUrl)) {
-            $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http')
-                . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+            $baseUrl = Config::get('site_url', 'http://localhost');
         }
 
         return rtrim($baseUrl, '/') . '/wp-json/panelalpha-migrator/v1/' . $route;

@@ -26,6 +26,7 @@ class Uninstaller
     private const TABLE_PATTERN = '/^pm[tb]_[0-9a-f]{6}_/';
     private const CONTENT_FILES = ['panelalpha-migrator-lock.php', 'panelalpha-migrator-lock.json', 'panelalpha-migrator-setup.php'];
     private const FOLDER_FILES = ['.htaccess', 'index.php'];
+    private const LOCK_FILE_PATTERN = '/^lock(?:-[0-9a-f]{20})?\.json$/';
 
     /** @var \wpdb */
     private object $wpdb;
@@ -144,7 +145,7 @@ class Uninstaller
      */
     private function isPluginEntry(string $name): bool
     {
-        if ($name === 'collected' || in_array($name, self::FOLDER_FILES, true)) {
+        if ($name === 'collected' || in_array($name, self::FOLDER_FILES, true) || preg_match(self::LOCK_FILE_PATTERN, $name) === 1) {
             return true;
         }
 

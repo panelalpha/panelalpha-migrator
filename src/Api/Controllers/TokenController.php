@@ -103,8 +103,6 @@ class TokenController
                     return is_string($headerToken) && hash_equals($configuredToken, $headerToken);
                 }
             }
-        } elseif (isset($_GET['token'])) {
-            return is_string($_GET['token']) && hash_equals($configuredToken, $_GET['token']);
         }
 
         return false;

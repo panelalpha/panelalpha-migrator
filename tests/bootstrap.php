@@ -12,3 +12,6 @@ require __DIR__ . '/Support/CurlOptionCapture.php';
 require __DIR__ . '/Support/WordPressError.php';
 require __DIR__ . '/Support/WordPressFunctions.php';
 require __DIR__ . '/Support/WordPressFilesystem.php';
+
+// Migration secrets are kept in an option, so every test that saves a token needs the option functions.
+require __DIR__ . '/Support/OptionStubs.php';

@@ -163,7 +163,9 @@ class TableRestoreHandler
         $wpdb = $this->wpdb;
         $suppressErrors = $wpdb->suppress_errors(true);
         $checkQuery = $wpdb->check_current_query;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- reads the session settings, which are not cacheable
         $sqlMode = $wpdb->get_var('SELECT @@SESSION.sql_mode');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- reads the session settings, which are not cacheable
         $foreignKeyChecks = $wpdb->get_var('SELECT @@SESSION.foreign_key_checks');
         $charsetChanged = false;
 
@@ -183,9 +185,11 @@ class TableRestoreHandler
                 $wpdb->set_charset($wpdb->dbh);
             }
             if ($sqlMode !== null) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- puts the session setting back
                 $wpdb->query($wpdb->prepare('SET SESSION sql_mode = %s', $sqlMode));
             }
             if ($foreignKeyChecks !== null) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- puts the session setting back
                 $wpdb->query($wpdb->prepare('SET SESSION foreign_key_checks = %d', (int) $foreignKeyChecks));
             }
             $wpdb->check_current_query = $checkQuery;
@@ -203,7 +207,7 @@ class TableRestoreHandler
     {
         $this->wpdb->check_current_query = false;
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- the statements are SET SESSION, CREATE TABLE from the source and row values already passed through prepare()
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- restores tables and rows, so caching does not apply; the statements are SET SESSION, CREATE TABLE from the source and row values already passed through prepare()
         if ($this->wpdb->query($sql) === false) {
             throw new \RuntimeException(esc_html($this->wpdb->last_error));
         }
@@ -219,6 +223,7 @@ class TableRestoreHandler
     private function validateChecksum(array $data, string $expectedChecksum): void
     {
         $previousPrecision = ini_get('serialize_precision');
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- float values must be encoded the same way on both sites, so the precision is set for this one call
         ini_set('serialize_precision', '-1');
 
         $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE);
@@ -229,6 +234,7 @@ class TableRestoreHandler
 
         $actualChecksum = hash('sha256', $json);
 
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- puts the precision back
         ini_set('serialize_precision', $previousPrecision);
 
         if ($actualChecksum !== $expectedChecksum) {

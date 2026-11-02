@@ -39,10 +39,12 @@ class RemoteSyncExecutor
     ): array
     {
         if (function_exists('set_time_limit')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- a long migration batch must not stop at the time limit
             @set_time_limit(0);
         }
 
         if (function_exists('ini_set')) {
+            // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- a long migration batch must not stop at the time limit
             @ini_set('max_execution_time', '0');
         }
 

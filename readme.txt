@@ -1,10 +1,10 @@
 === PanelAlpha Migrator ===
-Contributors: panelalpha
+Contributors: damianwilusz
 Tags: migration, migrate, move site, transfer, clone
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.2.1
+Stable tag: 1.2.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -108,6 +108,13 @@ PanelAlpha privacy policy: https://www.panelalpha.com/privacy-policy
 
 == Changelog ==
 
+= 1.2.2 =
+* The migration lock is a plain JSON file in `wp-content/migrations/`. The plugin no longer writes PHP files to `wp-content`.
+* The token of a migration is kept only in the WordPress database.
+* The site address comes from WordPress, not from the request's Host header.
+* Debug messages go to the PHP error log only when `WP_DEBUG` is on.
+* Updated the Symfony polyfill packages.
+
 = 1.2.1 =
 * New name and slug: PanelAlpha Migrator, `panelalpha-migrator`. Requires WordPress 6.2.
 * The destination receives the migration through the WordPress REST API, protected by its token. The separate receive script is removed.
@@ -146,6 +153,9 @@ PanelAlpha privacy policy: https://www.panelalpha.com/privacy-policy
 * First version: migrate a site from the dashboard or over the API, with stop and resume.
 
 == Upgrade Notice ==
+
+= 1.2.2 =
+Works with 1.2.1 on the other site. A migration running during the update keeps its lock.
 
 = 1.2.1 =
 Both sites of a migration must run 1.2.1. Older versions do not work with it.
