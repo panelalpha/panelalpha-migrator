@@ -8,53 +8,66 @@ Stable tag: 1.2.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Move a whole WordPress site, files and database, to another WordPress site. Install on both sites, paste one address, and start.
+Move your WordPress site to a new host in a few clicks. Pages, images, themes, plugins, settings and user accounts all come along.
 
 == Description ==
 
-PanelAlpha Migrator copies a whole site, its files and its database, from the server it runs on now to another WordPress installation, usually a new site on a PanelAlpha server. PanelAlpha uses the same plugin to run migrations for you, without a browser.
+Moving a WordPress site by hand means downloading files, exporting the database, uploading it all again and fixing links to the old address. PanelAlpha Migrator does this for you from the WordPress dashboard. You install it on your old site and on the new one, copy one address, paste it, and click Start Migration.
 
-How it works:
+Everything comes along: pages, posts, images, themes, plugins, settings and user accounts. Links that point to the old address are changed to the new one while the site is copied, even inside saved plugin settings.
 
-1. Install and activate the plugin on both sites: the source (the site you are moving) and the destination (the new WordPress).
-2. On the destination, open Migrator in the dashboard menu, select the download icon (Destination) and copy the address.
-3. On the source, open Migrator, paste the address and select Start Migration. Keep the tab open until it says the migration is complete.
+The plugin was made for moving sites to servers that run PanelAlpha, and PanelAlpha uses the same plugin when it moves a site for you. You can use it to move a site to any other WordPress site as well.
 
-Files and tables travel in small pieces, each checked on arrival, so a large site does not hit upload or time limits. A migration that stopped can continue from where it stopped.
+= How to Move Your Site =
 
-What moves:
+1. Install and activate PanelAlpha Migrator on both sites: your old site (the source) and the new WordPress you are moving to (the destination).
+2. On the new site, open Migrator in the dashboard menu, click the download icon (Destination) and copy the address.
+3. On the old site, open Migrator, paste the address and click Start Migration.
+4. Keep the tab open until it says the migration is complete. Then log in to the new site with the username and password from your old site.
 
-* Every table in the source database.
-* Every file in the site folder, with permissions and dates, including hidden files.
-* Your uploads, themes and plugins.
-* The old site address is replaced with the new one in the database while it is sent, including inside saved plugin settings.
+= Large Sites Are Fine =
 
-What stays on the destination:
+Your site travels in small pieces, and each piece is checked when it arrives. Big sites do not hit upload size or time limits on your host. If the browser closes or the connection drops halfway, open Migrator again and continue from where it stopped. Nothing is sent twice.
 
-* `wp-config.php`, so the destination still connects to its own database.
-* The `.htaccess` file in the site folder.
+= Move First, Switch the Domain Later =
+
+You can copy the site to the new server while your domain still points at the old one. Enter the new server's IP address under Advanced Options (the gear icon). The new site is then ready before you change DNS.
+
+= What Gets Copied =
+
+* Every table in the old site's database, including users and settings.
+* Every file in the site folder: uploads, themes, plugins and hidden files, with their permissions and dates.
+
+= What Stays on the New Site =
+
+* `wp-config.php`, so the new site stays connected to its own database.
+* The `.htaccess` file in the site folder. Copy your own redirects over by hand.
 * The migrator plugin and its own token.
-* Tables that exist only on the destination.
+* Tables that exist only on the new site.
 
-`node_modules`, `.git` and `.svn` folders are always left out. You can leave out more under Advanced Options.
+`node_modules`, `.git` and `.svn` folders are never copied. You can leave out more files under Advanced Options.
 
-The migration replaces the destination site. Each table the source has is deleted on the destination and recreated from the source, and files with the same path are overwritten. Afterwards you log in to the destination with the source site's usernames and passwords. Back up the destination first if it holds anything you want to keep.
+= Before You Start =
 
-Treat the destination address like a password. While the plugin is active, anyone who has it can write to the destination. Deactivate and delete the plugin on both sites when you are happy with the result.
+The migration replaces the new site's content with the old site's. Each table that the old site has is deleted on the new site and created again from the old site, and files with the same path are overwritten. If the new site holds anything you want to keep, back it up first.
 
-You can also migrate to a server before the domain points at it, by entering the new server's IP address under Destination IP Address (Optional).
+Treat the address you copy like a password. While the plugin is active, anyone who has it can write to the new site. When you are happy with the result, deactivate and delete the plugin on both sites.
 
 == Installation ==
 
-1. In WordPress, open Plugins > Add New Plugin, search for PanelAlpha Migrator, then select Install Now and Activate. Or upload the plugin zip under Plugins > Add New Plugin > Upload Plugin.
-2. Do this on both sites, the source and the destination.
-3. A Migrator item appears in the dashboard menu, for administrators only.
-4. On the destination, open Migrator, select the download icon (Destination) and copy the address.
-5. On the source, open Migrator, paste the address and select Start Migration.
+1. In WordPress, open Plugins > Add New Plugin, search for PanelAlpha Migrator, then click Install Now and Activate. You can also upload the plugin zip under Plugins > Add New Plugin > Upload Plugin.
+2. Do this on both sites, the old one (source) and the new one (destination).
+3. A Migrator item appears in the dashboard menu. Only administrators see it.
+4. On the new site, open Migrator, click the download icon (Destination) and copy the address.
+5. On the old site, open Migrator, paste the address and click Start Migration.
 
 You need an administrator login on both sites, PHP 7.4 or newer with the cURL extension, and WordPress must be able to write to `wp-content` on both sites.
 
 == Frequently Asked Questions ==
+
+= Do I need FTP or database access? =
+
+No. Everything happens in the WordPress dashboard. You only need an administrator login on both sites.
 
 = Will it overwrite what is already on the destination? =
 
@@ -66,7 +79,7 @@ Yes. Enter the new server's IP address in Destination IP Address (Optional) and 
 
 = My browser closed halfway. Do I start again? =
 
-No. Open Migrator on the source in the same browser and select Resume Backup under Interrupted Migration Detected. What was already sent is not sent again.
+No. Open Migrator on the source in the same browser and click Resume Backup under Interrupted Migration Detected. What was already sent is not sent again.
 
 = Which login works on the destination afterwards? =
 
@@ -98,13 +111,14 @@ This plugin sends data to another WordPress site, and only while a migration run
 
 The plugin does not send data to PanelAlpha servers otherwise. It makes no other outbound requests.
 
-PanelAlpha terms of service: https://www.panelalpha.com/terms-of-service
-PanelAlpha privacy policy: https://www.panelalpha.com/privacy-policy
-
 == Screenshots ==
 
-1. On the destination: copy the address with its token.
-2. On the source: paste the address and start the migration.
+1. On the new site: copy the address with its token.
+2. On the old site: paste the address and start the migration.
+3. Advanced Options: move to a server before the domain points at it, and leave out files you do not need.
+4. The migration in progress. Files travel in small pieces, so large sites are fine.
+5. The browser closed halfway. Click Resume Backup to continue from where it stopped.
+6. Done. The summary shows how many files and tables were copied and how long it took.
 
 == Changelog ==
 
